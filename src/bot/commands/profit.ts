@@ -5,8 +5,10 @@ import {
   EmbedBuilder,
   Colors,
 } from 'discord.js';
+import { upsertUser } from '../../database/repositories/userRepository';
 import { findWalletsByUserId } from '../../database/repositories/walletRepository';
 import { getCollectionPnlForWallet } from '../../database/repositories/profitRepository';
+import { getOpenSeaClient } from '../../api/opensea/client';
 import { generatePnlImage } from '../../utils/imageGenerator';
 import { getEthPriceUsd } from '../../api/ethereum/client';
 import { isValidEthAddress } from '../../utils/validators';
@@ -36,7 +38,6 @@ export const profitCommand = {
     const contractRaw = interaction.options.getString('contract', true).trim();
     const walletInput = interaction.options.getString('wallet')?.trim().toLowerCase();
 
-    // Validate contract address before deferring so we can respond ephemerally
     if (!isValidEthAddress(contractRaw)) {
       await interaction.reply({
         ephemeral: true,
@@ -52,8 +53,15 @@ export const profitCommand = {
 
     const contractAddress = contractRaw.toLowerCase();
 
-    // Pre-check: wallet must exist
-    const wallets = await findWalletsByUserId(interaction.user.id);
+    const user = await upsertUser(
+      interaction.user.id,
+      interaction.user.username,
+      interaction.user.discriminator,
+      interaction.user.displayAvatarURL(),
+      interaction.guildId ?? undefined,
+    );
+
+    const wallets = await findWalletsByUserId(user.id);
     if (wallets.length === 0) {
       await interaction.reply({
         ephemeral: true,
@@ -92,7 +100,7 @@ export const profitCommand = {
       return;
     }
 
-    // Pre-checks passed — defer ephemerally for loading state
+    // Pre-checks passed — defer ephemerally while we do the heavy lifting
     await interaction.deferReply({ ephemeral: true });
 
     let combined: Awaited<ReturnType<typeof getCollectionPnlForWallet>> = null;
@@ -104,14 +112,14 @@ export const profitCommand = {
       if (!combined) {
         combined = { ...stats };
       } else {
-        combined.spentEth       += stats.spentEth;
-        combined.salesEth       += stats.salesEth;
-        combined.gasFeeEth      += stats.gasFeeEth;
-        combined.mintCount      += stats.mintCount;
-        combined.buyCount       += stats.buyCount;
-        combined.sellCount      += stats.sellCount;
-        combined.heldCount      += stats.heldCount;
-        combined.realizedPnlEth += stats.realizedPnlEth;
+        combined.spentEth         += stats.spentEth;
+        combined.salesEth         += stats.salesEth;
+        combined.gasFeeEth        += stats.gasFeeEth;
+        combined.mintCount        += stats.mintCount;
+        combined.buyCount         += stats.buyCount;
+        combined.sellCount        += stats.sellCount;
+        combined.heldCount        += stats.heldCount;
+        combined.realizedPnlEth   += stats.realizedPnlEth;
         combined.unrealizedPnlEth += stats.unrealizedPnlEth;
       }
     }
@@ -131,11 +139,27 @@ export const profitCommand = {
       return;
     }
 
-    const ethPriceUsd = await getEthPriceUsd().catch(() => 1800);
-    const holdingValueEth = combined.heldCount * combined.floorPriceEth;
-    const totalPnlEth = combined.realizedPnlEth + combined.unrealizedPnlEth;
-    const totalCostEth = combined.spentEth + combined.gasFeeEth;
-    const roiPct = totalCostEth > 0 ? (totalPnlEth / totalCostEth) * 100 : 0;
+    // Fetch live data from OpenSea in parallel with ETH price
+    const [ethPriceUsd, liveCollection] = await Promise.all([
+      getEthPriceUsd().catch(() => 1800),
+      (combined.collectionSlug
+        ? getOpenSeaClient().getCollectionStats(combined.collectionSlug)
+            .then(s => ({ floorPrice: s.total.floor_price, numOwners: s.total.num_owners }))
+            .catch(() => null)
+        : getOpenSeaClient().getCollectionByContract(contractAddress)
+            .then(c => c ? { floorPrice: c.totalSupply ?? null, numOwners: null } : null)
+            .catch(() => null)
+      ),
+    ]);
+
+    // Live floor price takes priority over cached DB value
+    const floorPriceEth = liveCollection?.floorPrice ?? combined.floorPriceEth;
+    const holdersCount  = liveCollection?.numOwners  ?? null;
+
+    const holdingValueEth = combined.heldCount * floorPriceEth;
+    const totalPnlEth     = combined.realizedPnlEth + combined.unrealizedPnlEth;
+    const totalCostEth    = combined.spentEth + combined.gasFeeEth;
+    const roiPct          = totalCostEth > 0 ? (totalPnlEth / totalCostEth) * 100 : 0;
 
     const walletLabel =
       targetWallets.length === 1
@@ -143,22 +167,25 @@ export const profitCommand = {
         : `${targetWallets.length} wallets`;
 
     const imageBuffer = await generatePnlImage({
-      collectionName: combined.collectionName,
+      collectionName:    combined.collectionName,
       collectionImageUrl: combined.collectionImageUrl ?? undefined,
-      contractAddress: combined.contractAddress,
+      contractAddress:   combined.contractAddress,
       walletLabel,
-      spentEth: combined.spentEth,
-      salesEth: combined.salesEth,
+      totalSupply:       combined.totalSupply,
+      holdersCount,
+      floorPriceEth,
+      spentEth:          combined.spentEth,
+      salesEth:          combined.salesEth,
       holdingValueEth,
-      gasFeeEth: combined.gasFeeEth,
-      mintCount: combined.mintCount,
-      buyCount: combined.buyCount,
-      sellCount: combined.sellCount,
-      heldCount: combined.heldCount,
-      realizedPnlEth: combined.realizedPnlEth,
-      unrealizedPnlEth: combined.unrealizedPnlEth,
+      gasFeeEth:         combined.gasFeeEth,
+      mintCount:         combined.mintCount,
+      buyCount:          combined.buyCount,
+      sellCount:         combined.sellCount,
+      heldCount:         combined.heldCount,
+      realizedPnlEth:    combined.realizedPnlEth,
+      unrealizedPnlEth:  combined.unrealizedPnlEth,
       totalPnlEth,
-      totalPnlUsd: totalPnlEth * ethPriceUsd,
+      totalPnlUsd:       totalPnlEth * ethPriceUsd,
       roiPct,
       ethPriceUsd,
     });
@@ -168,9 +195,10 @@ export const profitCommand = {
       contract: contractAddress,
       pnlEth: totalPnlEth,
       roiPct,
+      floorPriceEth,
+      holdersCount,
     });
 
-    // Remove the ephemeral "thinking" message, post the image publicly
     await interaction.deleteReply();
     await interaction.followUp({
       files: [new AttachmentBuilder(imageBuffer, { name: 'conn3ct-profit.png' })],

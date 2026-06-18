@@ -3,8 +3,10 @@ import { prisma } from '../prisma';
 export interface CollectionPnlStats {
   collectionName: string;
   contractAddress: string;
+  collectionSlug: string | null;
   collectionImageUrl: string | null;
   floorPriceEth: number;
+  totalSupply: number | null;
   spentEth: number;
   salesEth: number;
   gasFeeEth: number;
@@ -66,8 +68,10 @@ export async function getCollectionPnlForWallet(
   return {
     collectionName: collection.name,
     contractAddress: collection.contractAddress,
+    collectionSlug: collection.slug ?? null,
     collectionImageUrl: collection.imageUrl,
     floorPriceEth: Number(collection.floorPriceEth ?? 0),
+    totalSupply: collection.totalSupply ?? null,
     spentEth,
     salesEth,
     gasFeeEth,
