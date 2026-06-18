@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: conn3ct-pnl
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
