@@ -33,8 +33,6 @@ export const holdingsCommand = {
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
-
     const page = interaction.options.getInteger('page') ?? 1;
     const user = await upsertUser(
       interaction.user.id,
@@ -44,6 +42,8 @@ export const holdingsCommand = {
       interaction.guildId ?? undefined,
     );
 
+    await interaction.deferReply({ ephemeral: true });
+
     const ethPrice = await getEthPriceUsd();
     const allHoldings = await buildHoldingDetails(user.id, ethPrice);
 
@@ -52,13 +52,18 @@ export const holdingsCommand = {
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Blue)
-            .setTitle('🖼️ No Current Holdings')
-            .setDescription("You don't hold any NFTs currently. Check your trade history with `/trade-history`."),
+            .setTitle('No Current Holdings')
+            .setDescription(
+              'You have no NFTs in your tracked wallets.\n\n' +
+              'Add a wallet with `/wallet-add`, then sync with `/refresh`.',
+            ),
         ],
       });
       return;
     }
 
+    // Data exists — post the holdings publicly
+    await interaction.deleteReply();
     await sendHoldingsPage(interaction, allHoldings, page, ethPrice, user.username);
   },
 };
@@ -123,5 +128,5 @@ export async function sendHoldingsPage(
       .setStyle(ButtonStyle.Primary),
   );
 
-  await interaction.editReply({ embeds: [embed], components: [row] });
+  await interaction.followUp({ embeds: [embed], components: [row] });
 }

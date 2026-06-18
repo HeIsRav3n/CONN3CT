@@ -46,8 +46,6 @@ export const tradeHistoryCommand = {
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
-
     const page = interaction.options.getInteger('page') ?? 1;
     const sortRaw = interaction.options.getString('sort') ?? 'date_desc';
     const [sortBy, sortDir] = sortRaw.split('_') as ['date' | 'pnl' | 'roi', 'asc' | 'desc'];
@@ -59,6 +57,8 @@ export const tradeHistoryCommand = {
       interaction.user.displayAvatarURL(),
       interaction.guildId ?? undefined,
     );
+
+    await interaction.deferReply({ ephemeral: true });
 
     const ethPrice = await getEthPriceUsd();
     const { records, total } = await getTradeHistory(user.id, {
@@ -73,8 +73,11 @@ export const tradeHistoryCommand = {
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Blue)
-            .setTitle('📜 No Trade History')
-            .setDescription('No closed trades found yet. Trades appear after you sell an NFT.'),
+            .setTitle('No Trade History')
+            .setDescription(
+              'No closed trades found yet.\n\n' +
+              'Add a wallet with `/wallet-add`, sync with `/refresh`, then sell an NFT to see trade history.',
+            ),
         ],
       });
       return;
@@ -126,6 +129,7 @@ export const tradeHistoryCommand = {
         .setDisabled(safePage >= totalPages),
     );
 
-    await interaction.editReply({ embeds: [embed], components: [row] });
+    await interaction.deleteReply();
+    await interaction.followUp({ embeds: [embed], components: [row] });
   },
 };

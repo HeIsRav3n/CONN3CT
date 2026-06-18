@@ -1,385 +1,106 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 
-export interface CollectionPnlImageData {
-  collectionName: string;
-  collectionImageUrl?: string;
-  contractAddress: string;
-  walletLabel: string;
-  spentEth: number;
-  salesEth: number;
-  holdingValueEth: number;
-  gasFeeEth: number;
-  mintCount: number;
-  buyCount: number;
-  sellCount: number;
-  heldCount: number;
-  realizedPnlEth: number;
-  unrealizedPnlEth: number;
-  totalPnlEth: number;
-  totalPnlUsd: number;
-  roiPct: number;
-  ethPriceUsd: number;
-}
-
+// ── Palette ───────────────────────────────────────────────────
+const BG      = '#07070e';
+const TEXT    = '#e8ecff';
+const DIM     = 'rgba(180,190,220,0.55)';
+const DIMMER  = 'rgba(140,150,190,0.35)';
+const PROFIT  = '#00e676';
+const LOSS    = '#ff3d71';
+const ACCENT  = '#4488ff';
+const DIV     = 'rgba(255,255,255,0.07)';
 const W = 900;
-const H = 500;
-const LEFT_W = 260;
+const H = 460;
 
-function trunc(addr: string): string {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
-function fEth(n: number): string {
-  return (n >= 0 ? '' : '') + Math.abs(n).toFixed(4);
-}
-
+// ── Format helpers ────────────────────────────────────────────
+function fEth(n: number, d = 4): string { return Math.abs(n).toFixed(d); }
 function fUsd(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `$${(abs / 1_000).toFixed(1)}k`;
-  return `$${Math.round(abs)}`;
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return `$${(a/1_000_000).toFixed(2)}M`;
+  if (a >= 1_000)     return `$${(a/1_000).toFixed(2)}k`;
+  return `$${a.toFixed(2)}`;
+}
+function fRoi(p: number): string {
+  const s = p >= 0 ? '+' : '-';
+  const a = Math.abs(p);
+  if (a >= 100_000) return `${s}${(a/1000).toFixed(0)}k%`;
+  if (a >= 10_000)  return `${s}${(a/1000).toFixed(1)}k%`;
+  return `${s}${a.toFixed(2)}%`;
+}
+function sign(n: number): string { return n >= 0 ? '+' : '-'; }
+function trunc(a: string): string { return `${a.slice(0,6)}…${a.slice(-4)}`; }
+
+type Ctx = ReturnType<ReturnType<typeof createCanvas>['getContext']>;
+
+// ── Shared draw helpers ───────────────────────────────────────
+function drawBackground(ctx: Ctx): void {
+  // Deep dark base
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+  // Subtle blue vignette at top
+  const v = ctx.createRadialGradient(W/2, 0, 0, W/2, 0, 600);
+  v.addColorStop(0, 'rgba(30,60,180,0.12)');
+  v.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, W, H);
 }
 
-function fRoi(pct: number): string {
-  const sign = pct >= 0 ? '+' : '-';
-  const abs = Math.abs(pct);
-  if (abs >= 100_000) return `${sign}${Math.round(abs / 1000)}k%`;
-  if (abs >= 10_000) return `${sign}${(abs / 1000).toFixed(1)}k%`;
-  return `${sign}${Math.round(abs)}%`;
+function drawHeader(ctx: Ctx, username: string, right: string): void {
+  // Gradient top strip
+  const g = ctx.createLinearGradient(0, 0, W, 0);
+  g.addColorStop(0,   '#0044cc');
+  g.addColorStop(0.5, '#2200aa');
+  g.addColorStop(1,   '#440099');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, 52);
+
+  // Branding
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('◈ CONN3CT', 20, 33);
+
+  // Username centre
+  ctx.font = 'bold 13px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.textAlign = 'center';
+  ctx.fillText(username.toUpperCase(), W/2, 33);
+  ctx.textAlign = 'left';
+
+  // Right label
+  ctx.font = '11px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.textAlign = 'right';
+  ctx.fillText(right, W - 20, 33);
+  ctx.textAlign = 'left';
 }
 
-function drawRoundRect(
-  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
-  x: number, y: number, w: number, h: number, r: number,
-): void {
+function hline(ctx: Ctx, y: number, x0 = 0, x1 = W, alpha = 0.07): void {
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+}
+function vline(ctx: Ctx, x: number, y0 = 52, y1 = H - 80): void {
+  ctx.strokeStyle = DIV;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+}
+
+function roundRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
   ctx.closePath();
 }
 
-export async function generatePnlImage(data: CollectionPnlImageData): Promise<Buffer> {
-  const canvas = createCanvas(W, H);
-  const ctx = canvas.getContext('2d');
-
-  // ── Background ────────────────────────────────────────────────
-  ctx.fillStyle = '#07070f';
-  ctx.fillRect(0, 0, W, H);
-
-  // Subtle dot grid
-  ctx.fillStyle = 'rgba(0,180,255,0.04)';
-  for (let x = 20; x < W; x += 28) {
-    for (let y = 20; y < H; y += 28) {
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // ── Left panel ────────────────────────────────────────────────
-  const lg = ctx.createLinearGradient(0, 0, LEFT_W, 0);
-  lg.addColorStop(0, 'rgba(0,180,255,0.07)');
-  lg.addColorStop(1, 'rgba(0,180,255,0.02)');
-  ctx.fillStyle = lg;
-  ctx.fillRect(0, 0, LEFT_W, H);
-
-  ctx.strokeStyle = 'rgba(0,180,255,0.18)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(LEFT_W, 0);
-  ctx.lineTo(LEFT_W, H);
-  ctx.stroke();
-
-  // ── Top bar ───────────────────────────────────────────────────
-  const topH = 44;
-  ctx.fillStyle = 'rgba(0,180,255,0.06)';
-  ctx.fillRect(0, 0, W, topH);
-  ctx.strokeStyle = 'rgba(0,180,255,0.25)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, topH);
-  ctx.lineTo(W, topH);
-  ctx.stroke();
-
-  // Logo mark
-  ctx.fillStyle = '#00d4ff';
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText('◈', 14, 27);
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText('CONN3CT', 30, 27);
-  ctx.fillStyle = 'rgba(0,212,255,0.5)';
-  ctx.font = '11px monospace';
-  ctx.fillText('PNL TERMINAL', 107, 27);
-
-  // Wallet label top-right
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText(data.walletLabel, W - 16, 27);
-  ctx.textAlign = 'left';
-
-  // ── Collection image ──────────────────────────────────────────
-  const imgX = 16, imgY = 56, imgSize = 200;
-  if (data.collectionImageUrl) {
-    try {
-      const img = await loadImage(data.collectionImageUrl);
-      ctx.save();
-      drawRoundRect(ctx, imgX, imgY, imgSize, imgSize, 8);
-      ctx.clip();
-      ctx.drawImage(img, imgX, imgY, imgSize, imgSize);
-      ctx.restore();
-      // Glow border
-      ctx.shadowColor = '#00d4ff';
-      ctx.shadowBlur = 16;
-      ctx.strokeStyle = 'rgba(0,212,255,0.5)';
-      ctx.lineWidth = 1.5;
-      drawRoundRect(ctx, imgX, imgY, imgSize, imgSize, 8);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    } catch {
-      ctx.fillStyle = 'rgba(0,180,255,0.08)';
-      drawRoundRect(ctx, imgX, imgY, imgSize, imgSize, 8);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(0,180,255,0.3)';
-      ctx.font = '48px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('?', imgX + imgSize / 2, imgY + imgSize / 2 + 16);
-      ctx.textAlign = 'left';
-    }
-  } else {
-    ctx.fillStyle = 'rgba(0,180,255,0.08)';
-    drawRoundRect(ctx, imgX, imgY, imgSize, imgSize, 8);
-    ctx.fill();
-  }
-
-  // Collection name
-  ctx.font = 'bold 14px monospace';
-  ctx.fillStyle = '#00d4ff';
-  ctx.textAlign = 'center';
-  let name = data.collectionName.toUpperCase();
-  while (ctx.measureText(name).width > LEFT_W - 20 && name.length > 1) name = name.slice(0, -1);
-  if (name !== data.collectionName.toUpperCase()) name += '…';
-  ctx.fillText(name, LEFT_W / 2, imgY + imgSize + 22);
-
-  // Contract
-  ctx.font = '9px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.4)';
-  ctx.fillText(trunc(data.contractAddress), LEFT_W / 2, imgY + imgSize + 38);
-  ctx.textAlign = 'left';
-
-  // ── Stats grid (left panel) ───────────────────────────────────
-  const statsY = imgY + imgSize + 58;
-  const statItems = [
-    { label: 'MINTS', val: data.mintCount },
-    { label: 'BUYS', val: data.buyCount },
-    { label: 'SELLS', val: data.sellCount },
-    { label: 'HELD', val: data.heldCount },
-  ];
-
-  statItems.forEach((s, i) => {
-    const col = i % 2;
-    const row = Math.floor(i / 2);
-    const sx = 16 + col * 120;
-    const sy = statsY + row * 44;
-
-    ctx.font = '9px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.45)';
-    ctx.fillText(s.label, sx, sy);
-
-    ctx.font = 'bold 22px monospace';
-    ctx.fillStyle = s.val > 0 ? '#ffffff' : 'rgba(255,255,255,0.3)';
-    ctx.fillText(String(s.val), sx, sy + 20);
-  });
-
-  // ── Right data rows ───────────────────────────────────────────
-  const rx = LEFT_W + 20;
-  const rowStartY = topH + 12;
-  const rowH = (H - topH - 85) / 4;
-
-  const rows = [
-    { label: 'SPENT', eth: data.spentEth },
-    { label: 'SALES', eth: data.salesEth },
-    { label: 'HOLDING', eth: data.holdingValueEth },
-    { label: 'GAS', eth: data.gasFeeEth },
-  ];
-
-  rows.forEach((row, i) => {
-    const ry = rowStartY + i * rowH;
-
-    // Divider
-    if (i > 0) {
-      ctx.strokeStyle = 'rgba(0,180,255,0.08)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(rx, ry - 2);
-      ctx.lineTo(W - 16, ry - 2);
-      ctx.stroke();
-    }
-
-    // Accent bar
-    const barGrad = ctx.createLinearGradient(LEFT_W + 2, 0, LEFT_W + 4, 0);
-    barGrad.addColorStop(0, 'rgba(0,212,255,0.8)');
-    barGrad.addColorStop(1, 'rgba(0,212,255,0)');
-    ctx.fillStyle = barGrad;
-    ctx.fillRect(LEFT_W + 2, ry + 4, 3, rowH - 12);
-
-    // Label
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.5)';
-    ctx.fillText(row.label, rx, ry + 16);
-
-    // ETH value
-    ctx.font = 'bold 26px monospace';
-    ctx.fillStyle = '#e8f4ff';
-    ctx.fillText(`${fEth(row.eth)} Ξ`, rx, ry + 48);
-
-    // USD value
-    ctx.font = '13px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.45)';
-    ctx.textAlign = 'right';
-    ctx.fillText(fUsd(row.eth * data.ethPriceUsd), W - 16, ry + 48);
-    ctx.textAlign = 'left';
-  });
-
-  // ── Bottom P&L bar ────────────────────────────────────────────
-  const btmH = 72;
-  const btmY = H - btmH;
-  const isProfit = data.totalPnlEth >= 0;
-  const pnlColor = isProfit ? '#00ff88' : '#ff3355';
-  const pnlBg = isProfit ? 'rgba(0,255,136,0.07)' : 'rgba(255,51,85,0.07)';
-  const pnlBorder = isProfit ? 'rgba(0,255,136,0.35)' : 'rgba(255,51,85,0.35)';
-
-  ctx.fillStyle = pnlBg;
-  ctx.fillRect(LEFT_W + 1, btmY, W - LEFT_W - 1, btmH);
-  ctx.strokeStyle = pnlBorder;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(LEFT_W + 1, btmY);
-  ctx.lineTo(W, btmY);
-  ctx.stroke();
-
-  // P&L label
-  ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.5)';
-  ctx.fillText('TOTAL P&L', rx, btmY + 18);
-
-  // Realized / Unrealized split
-  ctx.font = '9px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.4)';
-  ctx.textAlign = 'right';
-  ctx.fillText(
-    `REALIZED ${data.realizedPnlEth >= 0 ? '+' : ''}${fEth(data.realizedPnlEth)} Ξ  |  UNREALIZED ${data.unrealizedPnlEth >= 0 ? '+' : ''}${fEth(data.unrealizedPnlEth)} Ξ`,
-    W - 16,
-    btmY + 18,
-  );
-  ctx.textAlign = 'left';
-
-  // Big P&L number
-  const sign = data.totalPnlEth >= 0 ? '+' : '-';
-  ctx.font = 'bold 34px monospace';
-  ctx.fillStyle = pnlColor;
-  ctx.shadowColor = pnlColor;
-  ctx.shadowBlur = 12;
-  ctx.fillText(`${sign}${fEth(Math.abs(data.totalPnlEth))} Ξ`, rx, btmY + 56);
-  ctx.shadowBlur = 0;
-
-  // USD
-  ctx.font = 'bold 18px monospace';
-  ctx.fillStyle = pnlColor;
-  ctx.fillText(`${sign}${fUsd(Math.abs(data.totalPnlUsd))}`, rx + 270, btmY + 56);
-
-  // ROI
-  ctx.font = 'bold 18px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillStyle = pnlColor;
-  ctx.shadowColor = pnlColor;
-  ctx.shadowBlur = 8;
-  ctx.fillText(fRoi(data.roiPct), W - 16, btmY + 56);
-  ctx.shadowBlur = 0;
-  ctx.textAlign = 'left';
-
-  return canvas.toBuffer('image/png');
-}
-
-// ── Shared canvas helpers ─────────────────────────────────────
-function drawBg(ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>, w: number, h: number): void {
-  ctx.fillStyle = '#07070f';
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(0,180,255,0.04)';
-  for (let x = 20; x < w; x += 28)
-    for (let y = 20; y < h; y += 28) {
-      ctx.beginPath(); ctx.arc(x, y, 1, 0, Math.PI * 2); ctx.fill();
-    }
-}
-
-function drawTopBar(
-  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
-  w: number, label: string, right: string,
-): void {
-  ctx.fillStyle = 'rgba(0,180,255,0.06)';
-  ctx.fillRect(0, 0, w, 44);
-  ctx.strokeStyle = 'rgba(0,180,255,0.25)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, 44); ctx.lineTo(w, 44); ctx.stroke();
-  ctx.font = 'bold 13px monospace';
-  ctx.fillStyle = '#00d4ff';
-  ctx.fillText('◈ CONN3CT', 14, 27);
-  ctx.fillStyle = 'rgba(0,212,255,0.5)';
-  ctx.font = '11px monospace';
-  ctx.fillText(label, 100, 27);
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.textAlign = 'right';
-  ctx.fillText(right, w - 16, 27);
-  ctx.textAlign = 'left';
-}
-
-function drawBottomPnl(
-  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
-  w: number, h: number, totalEth: number, totalUsd: number, roi: number,
-): void {
-  const btmH = 72;
-  const btmY = h - btmH;
-  const isProfit = totalEth >= 0;
-  const col = isProfit ? '#00ff88' : '#ff3355';
-  ctx.fillStyle = isProfit ? 'rgba(0,255,136,0.07)' : 'rgba(255,51,85,0.07)';
-  ctx.fillRect(0, btmY, w, btmH);
-  ctx.strokeStyle = isProfit ? 'rgba(0,255,136,0.35)' : 'rgba(255,51,85,0.35)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, btmY); ctx.lineTo(w, btmY); ctx.stroke();
-
-  ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.5)';
-  ctx.fillText('TOTAL P&L', 20, btmY + 18);
-
-  const sign = totalEth >= 0 ? '+' : '-';
-  ctx.font = 'bold 34px monospace';
-  ctx.fillStyle = col;
-  ctx.shadowColor = col; ctx.shadowBlur = 12;
-  ctx.fillText(`${sign}${fEth(Math.abs(totalEth))} Ξ`, 20, btmY + 56);
-  ctx.shadowBlur = 0;
-
-  ctx.font = 'bold 18px monospace';
-  ctx.fillStyle = col;
-  ctx.fillText(`${sign}${fUsd(Math.abs(totalUsd))}`, 310, btmY + 56);
-
-  ctx.textAlign = 'right';
-  ctx.shadowColor = col; ctx.shadowBlur = 8;
-  ctx.fillText(fRoi(roi), w - 16, btmY + 56);
-  ctx.shadowBlur = 0;
-  ctx.textAlign = 'left';
-}
-
-// ── PNL Overview Card ─────────────────────────────────────────
+// ── PNL Card ──────────────────────────────────────────────────
 export interface PnlCardData {
   username: string;
-  avatarUrl?: string;
   realizedPnlEth: number;
   unrealizedPnlEth: number;
   totalPnlEth: number;
@@ -396,148 +117,137 @@ export interface PnlCardData {
   ethPriceUsd: number;
 }
 
-export async function generatePnlCard(data: PnlCardData): Promise<Buffer> {
+export async function generatePnlCard(d: PnlCardData): Promise<Buffer> {
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
-  drawBg(ctx, W, H);
-  drawTopBar(ctx, W, 'PNL TERMINAL', `ETH: ${fUsd(data.ethPriceUsd)}`);
+  const pCol = d.totalPnlEth >= 0 ? PROFIT : LOSS;
 
-  const col = data.totalPnlEth >= 0 ? '#00ff88' : '#ff3355';
-  const MID = W / 2;
-  const TOP = 56;
+  drawBackground(ctx);
+  drawHeader(ctx, d.username, `1 ETH ≈ ${fUsd(d.ethPriceUsd)}`);
 
-  // ── Left column: P&L breakdown ────────────────────────────
-  const leftItems = [
-    { label: 'REALIZED P&L', eth: data.realizedPnlEth, signed: true },
-    { label: 'UNREALIZED P&L', eth: data.unrealizedPnlEth, signed: true },
-    { label: 'COST BASIS', eth: data.costBasisEth, signed: false },
-  ];
-
-  leftItems.forEach((item, i) => {
-    const y = TOP + i * 108;
-    const isPos = item.eth >= 0;
-    const itemCol = item.signed ? (isPos ? '#00ff88' : '#ff3355') : '#e8f4ff';
-
-    ctx.fillStyle = 'rgba(0,180,255,0.08)';
-    ctx.fillRect(16, y, MID - 32, 92);
-    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(16, y, MID - 32, 92);
-
-    // Accent top bar
-    ctx.fillStyle = item.signed ? (isPos ? '#00ff88' : '#ff3355') : '#00d4ff';
-    ctx.fillRect(16, y, MID - 32, 2);
-
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.55)';
-    ctx.fillText(item.label, 26, y + 18);
-
-    const sign = item.signed ? (item.eth >= 0 ? '+' : '-') : '';
-    ctx.font = 'bold 24px monospace';
-    ctx.fillStyle = itemCol;
-    if (item.signed) { ctx.shadowColor = itemCol; ctx.shadowBlur = 8; }
-    ctx.fillText(`${sign}${fEth(Math.abs(item.eth))} Ξ`, 26, y + 52);
-    ctx.shadowBlur = 0;
-
-    ctx.font = '12px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.5)';
-    ctx.fillText(`${sign}${fUsd(Math.abs(item.eth * data.ethPriceUsd))}`, 26, y + 74);
-  });
-
-  // ── Right column: Performance ─────────────────────────────
-  const rx = MID + 16;
-  const rw = W - rx - 16;
-
-  // ROI box
-  ctx.fillStyle = 'rgba(0,180,255,0.08)';
-  ctx.fillRect(rx, TOP, rw, 88);
-  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(rx, TOP, rw, 88);
-  ctx.fillStyle = '#00d4ff';
-  ctx.fillRect(rx, TOP, rw, 2);
+  // ── Left: Hero P&L ────────────────────────────────────────
+  const lx = 36, heroY = 96;
 
   ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.fillText('OVERALL ROI', rx + 10, TOP + 18);
+  ctx.fillStyle = DIM;
+  ctx.fillText('TOTAL P&L', lx, heroY);
 
-  ctx.font = 'bold 30px monospace';
-  ctx.fillStyle = col;
-  ctx.shadowColor = col; ctx.shadowBlur = 10;
-  ctx.fillText(fRoi(data.roiPct), rx + 10, TOP + 60);
+  // Big number
+  const heroStr = `${sign(d.totalPnlEth)}${fEth(d.totalPnlEth, 4)} Ξ`;
+  ctx.font = 'bold 48px monospace';
+  ctx.fillStyle = pCol;
+  ctx.shadowColor = pCol;
+  ctx.shadowBlur = 20;
+  ctx.fillText(heroStr, lx, heroY + 60);
   ctx.shadowBlur = 0;
 
-  // Win rate box
-  const wrY = TOP + 104;
-  ctx.fillStyle = 'rgba(0,180,255,0.08)';
-  ctx.fillRect(rx, wrY, rw, 92);
-  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-  ctx.strokeRect(rx, wrY, rw, 92);
-  ctx.fillStyle = '#00d4ff';
-  ctx.fillRect(rx, wrY, rw, 2);
+  // USD
+  ctx.font = 'bold 18px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.65)';
+  ctx.fillText(`${sign(d.totalPnlUsd)}${fUsd(d.totalPnlUsd)}`, lx, heroY + 88);
 
+  // ROI badge
+  const roiStr = fRoi(d.roiPct);
+  ctx.font = 'bold 13px monospace';
+  const roiW = ctx.measureText(roiStr).width + 20;
+  ctx.fillStyle = d.totalPnlEth >= 0 ? 'rgba(0,230,118,0.12)' : 'rgba(255,61,113,0.12)';
+  roundRect(ctx, lx, heroY + 100, roiW, 26, 4);
+  ctx.fill();
+  ctx.strokeStyle = pCol;
+  ctx.lineWidth = 1;
+  roundRect(ctx, lx, heroY + 100, roiW, 26, 4);
+  ctx.stroke();
+  ctx.fillStyle = pCol;
+  ctx.fillText(roiStr, lx + 10, heroY + 118);
+
+  // Win rate bar (left, below roi)
+  const wrY = heroY + 148;
   ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.fillText('WIN RATE', rx + 10, wrY + 18);
-
+  ctx.fillStyle = DIM;
+  ctx.fillText('WIN RATE', lx, wrY);
   ctx.font = 'bold 22px monospace';
-  ctx.fillStyle = data.winRate >= 50 ? '#00ff88' : '#ff3355';
-  ctx.fillText(`${data.winRate.toFixed(1)}%`, rx + 10, wrY + 48);
+  ctx.fillStyle = d.winRate >= 50 ? PROFIT : LOSS;
+  ctx.fillText(`${d.winRate.toFixed(0)}%`, lx, wrY + 28);
 
-  // Progress bar
-  const barX = rx + 10, barY = wrY + 60, barW = rw - 20, barH = 14;
+  const bx = lx, by = wrY + 36, bw = 200, bh = 8;
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.fillRect(barX, barY, barW, barH);
-  const fill = (data.winRate / 100) * barW;
-  const barGrad = ctx.createLinearGradient(barX, 0, barX + fill, 0);
-  barGrad.addColorStop(0, '#00d4ff');
-  barGrad.addColorStop(1, '#00ff88');
-  ctx.fillStyle = barGrad;
-  ctx.fillRect(barX, barY, fill, barH);
+  roundRect(ctx, bx, by, bw, bh, 4); ctx.fill();
+  const fill = Math.min(d.winRate / 100, 1) * bw;
+  const bg = ctx.createLinearGradient(bx, 0, bx + fill, 0);
+  bg.addColorStop(0, ACCENT); bg.addColorStop(1, PROFIT);
+  ctx.fillStyle = bg;
+  roundRect(ctx, bx, by, fill, bh, 4); ctx.fill();
 
-  // Trade stats
-  const trY = TOP + 212;
-  ctx.fillStyle = 'rgba(0,180,255,0.08)';
-  ctx.fillRect(rx, trY, rw, 116);
-  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-  ctx.strokeRect(rx, trY, rw, 116);
-  ctx.fillStyle = '#00d4ff';
-  ctx.fillRect(rx, trY, rw, 2);
+  // ── Divider ───────────────────────────────────────────────
+  vline(ctx, 460, 64, H - 88);
 
-  ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.fillText('PERFORMANCE', rx + 10, trY + 18);
-
-  const perfRows = [
-    { label: 'TRADES', val: `${data.totalTrades}  (${data.wins}W / ${data.losses}L)` },
-    { label: 'BEST', val: `+${fEth(data.bestTradeEth)} Ξ` },
-    { label: 'WORST', val: `${data.worstTradeEth >= 0 ? '+' : ''}${fEth(data.worstTradeEth)} Ξ` },
-    { label: 'AVG HOLD', val: `${data.avgHoldDays}d` },
+  // ── Right: Breakdown ──────────────────────────────────────
+  const rx = 492;
+  const rows: { label: string; eth: number; signed: boolean }[] = [
+    { label: 'REALIZED P&L',   eth: d.realizedPnlEth,   signed: true },
+    { label: 'UNREALIZED P&L', eth: d.unrealizedPnlEth, signed: true },
+    { label: 'COST BASIS',     eth: d.costBasisEth,     signed: false },
   ];
-  perfRows.forEach((r, i) => {
-    const ry2 = trY + 36 + i * 20;
+
+  rows.forEach((r, i) => {
+    const ry = 76 + i * 90;
+    const rc = r.signed ? (r.eth >= 0 ? PROFIT : LOSS) : TEXT;
+    const s  = r.signed ? sign(r.eth) : '';
+
     ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.45)';
-    ctx.fillText(r.label, rx + 10, ry2);
-    ctx.fillStyle = '#e8f4ff';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(r.val, rx + rw - 10, ry2);
-    ctx.textAlign = 'left';
+    ctx.fillStyle = DIM;
+    ctx.fillText(r.label, rx, ry);
+
+    ctx.font = 'bold 22px monospace';
+    ctx.fillStyle = rc;
+    ctx.fillText(`${s}${fEth(Math.abs(r.eth), 4)} Ξ`, rx, ry + 28);
+
+    ctx.font = '11px monospace';
+    ctx.fillStyle = DIMMER;
+    ctx.fillText(`${s}${fUsd(Math.abs(r.eth) * d.ethPriceUsd)}`, rx, ry + 46);
+
+    if (i < rows.length - 1) hline(ctx, ry + 60, rx, W - 20, 0.06);
   });
 
-  // Username
-  ctx.font = 'bold 11px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.5)';
-  ctx.textAlign = 'right';
-  ctx.fillText(data.username.toUpperCase(), W - 16, H - 78);
+  // ── Bottom stats strip ────────────────────────────────────
+  const btmY = H - 80;
+  hline(ctx, btmY, 0, W, 0.1);
+
+  const stats: { l: string; v: string }[] = [
+    { l: 'TRADES',   v: `${d.totalTrades}` },
+    { l: 'WINS',     v: `${d.wins}` },
+    { l: 'LOSSES',   v: `${d.losses}` },
+    { l: 'BEST',     v: `+${fEth(d.bestTradeEth)} Ξ` },
+    { l: 'WORST',    v: `${sign(d.worstTradeEth)}${fEth(Math.abs(d.worstTradeEth))} Ξ` },
+    { l: 'AVG HOLD', v: `${d.avgHoldDays}d` },
+  ];
+
+  const statW = W / stats.length;
+  stats.forEach((s, i) => {
+    const sx = i * statW + statW / 2;
+    ctx.font = '9px monospace';
+    ctx.fillStyle = DIMMER;
+    ctx.textAlign = 'center';
+    ctx.fillText(s.l, sx, btmY + 22);
+    ctx.font = 'bold 14px monospace';
+    ctx.fillStyle = TEXT;
+    ctx.fillText(s.v, sx, btmY + 44);
+    if (i > 0) vline(ctx, i * statW, btmY, H, );
+  });
   ctx.textAlign = 'left';
 
-  drawBottomPnl(ctx, W, H, data.totalPnlEth, data.totalPnlUsd, data.roiPct);
+  // Footer line
+  hline(ctx, H - 20, 0, W, 0.06);
+  ctx.font = '9px monospace';
+  ctx.fillStyle = DIMMER;
+  ctx.textAlign = 'right';
+  ctx.fillText('CONN3CT PNL · Powered by OpenSea & Alchemy', W - 20, H - 7);
+  ctx.textAlign = 'left';
+
   return canvas.toBuffer('image/png');
 }
 
-// ── Portfolio Overview Card ───────────────────────────────────
+// ── Portfolio Card ────────────────────────────────────────────
 export interface PortfolioCardData {
   username: string;
   walletCount: number;
@@ -560,123 +270,303 @@ export interface PortfolioCardData {
   ethPriceUsd: number;
 }
 
-export async function generatePortfolioCard(data: PortfolioCardData): Promise<Buffer> {
+export async function generatePortfolioCard(d: PortfolioCardData): Promise<Buffer> {
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
-  drawBg(ctx, W, H);
-  drawTopBar(
-    ctx, W, 'PORTFOLIO',
-    `${data.totalHoldings} NFTs · ${data.walletCount} wallet${data.walletCount !== 1 ? 's' : ''}`,
+  const pCol = d.totalPnlEth >= 0 ? PROFIT : LOSS;
+
+  drawBackground(ctx);
+  drawHeader(
+    ctx,
+    d.username,
+    `${d.totalHoldings} NFTs · ${d.walletCount} wallet${d.walletCount !== 1 ? 's' : ''}`,
   );
 
-  const col = data.totalPnlEth >= 0 ? '#00ff88' : '#ff3355';
-  const TOP = 56;
-  const MID = W / 2;
-
-  // ── Left: value + cost + gas ──────────────────────────────
-  const leftBoxes = [
-    { label: 'PORTFOLIO VALUE', eth: data.portfolioValueEth, usd: data.portfolioValueUsd, accent: '#00d4ff' },
-    { label: 'COST BASIS',      eth: data.costBasisEth, usd: data.costBasisEth * data.ethPriceUsd, accent: '#00d4ff' },
-    { label: 'GAS SPENT',       eth: data.gasFeeEth, usd: data.gasFeeEth * data.ethPriceUsd, accent: '#ff9d3d' },
-  ];
-  leftBoxes.forEach((b, i) => {
-    const y = TOP + i * 108;
-    ctx.fillStyle = 'rgba(0,180,255,0.08)';
-    ctx.fillRect(16, y, MID - 32, 92);
-    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(16, y, MID - 32, 92);
-    ctx.fillStyle = b.accent;
-    ctx.fillRect(16, y, MID - 32, 2);
-
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.55)';
-    ctx.fillText(b.label, 26, y + 18);
-
-    ctx.font = 'bold 24px monospace';
-    ctx.fillStyle = '#e8f4ff';
-    ctx.fillText(`${fEth(b.eth)} Ξ`, 26, y + 52);
-
-    ctx.font = '12px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.5)';
-    ctx.fillText(fUsd(b.usd), 26, y + 74);
-  });
-
-  // ── Right: P&L split + collections ───────────────────────
-  const rx = MID + 16;
-  const rw = W - rx - 16;
-
-  // Realized / Unrealized
-  [[data.realizedPnlEth, 'REALIZED P&L'], [data.unrealizedPnlEth, 'UNREALIZED P&L']].forEach(([eth, label], i) => {
-    const n = eth as number;
-    const y2 = TOP + i * 108;
-    const itemCol = n >= 0 ? '#00ff88' : '#ff3355';
-    ctx.fillStyle = 'rgba(0,180,255,0.08)';
-    ctx.fillRect(rx, y2, rw, 92);
-    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-    ctx.strokeRect(rx, y2, rw, 92);
-    ctx.fillStyle = itemCol;
-    ctx.fillRect(rx, y2, rw, 2);
-
-    ctx.font = '10px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.55)';
-    ctx.fillText(label as string, rx + 10, y2 + 18);
-
-    const sign = n >= 0 ? '+' : '-';
-    ctx.font = 'bold 22px monospace';
-    ctx.fillStyle = itemCol;
-    ctx.shadowColor = itemCol; ctx.shadowBlur = 6;
-    ctx.fillText(`${sign}${fEth(Math.abs(n))} Ξ`, rx + 10, y2 + 50);
-    ctx.shadowBlur = 0;
-
-    ctx.font = '12px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.5)';
-    ctx.fillText(`${sign}${fUsd(Math.abs(n * data.ethPriceUsd))}`, rx + 10, y2 + 72);
-  });
-
-  // Top collections
-  const colY = TOP + 220;
-  ctx.fillStyle = 'rgba(0,180,255,0.08)';
-  ctx.fillRect(rx, colY, rw, 108);
-  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
-  ctx.strokeRect(rx, colY, rw, 108);
-  ctx.fillStyle = '#00d4ff';
-  ctx.fillRect(rx, colY, rw, 2);
+  // ── Left: Portfolio Value hero ────────────────────────────
+  const lx = 36, heroY = 90;
 
   ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.55)';
-  ctx.fillText('TOP COLLECTIONS', rx + 10, colY + 18);
+  ctx.fillStyle = DIM;
+  ctx.fillText('PORTFOLIO VALUE', lx, heroY);
 
-  if (data.topCollections.length === 0) {
-    ctx.font = '11px monospace';
-    ctx.fillStyle = 'rgba(150,180,200,0.3)';
-    ctx.fillText('no collections synced yet', rx + 10, colY + 60);
+  ctx.font = 'bold 42px monospace';
+  ctx.fillStyle = TEXT;
+  ctx.fillText(`${fEth(d.portfolioValueEth, 4)} Ξ`, lx, heroY + 55);
+
+  ctx.font = 'bold 16px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(fUsd(d.portfolioValueUsd), lx, heroY + 80);
+
+  // Cost + gas
+  hline(ctx, heroY + 98, lx, 440, 0.08);
+
+  const smallRows = [
+    { l: 'COST BASIS', v: `${fEth(d.costBasisEth, 4)} Ξ`, sub: fUsd(d.costBasisEth * d.ethPriceUsd) },
+    { l: 'GAS SPENT',  v: `${fEth(d.gasFeeEth, 4)} Ξ`,   sub: fUsd(d.gasFeeEth * d.ethPriceUsd) },
+  ];
+  smallRows.forEach((r, i) => {
+    const ry = heroY + 116 + i * 68;
+    ctx.font = '9px monospace'; ctx.fillStyle = DIM;
+    ctx.fillText(r.l, lx, ry);
+    ctx.font = 'bold 18px monospace'; ctx.fillStyle = TEXT;
+    ctx.fillText(r.v, lx, ry + 24);
+    ctx.font = '11px monospace'; ctx.fillStyle = DIMMER;
+    ctx.fillText(r.sub, lx, ry + 42);
+  });
+
+  // Win rate
+  const wrY = heroY + 260;
+  ctx.font = '9px monospace'; ctx.fillStyle = DIM;
+  ctx.fillText('WIN RATE', lx, wrY);
+  ctx.font = 'bold 16px monospace';
+  ctx.fillStyle = d.winRate >= 50 ? PROFIT : LOSS;
+  ctx.fillText(`${d.winRate.toFixed(0)}%  (${d.wins}W / ${d.losses}L)`, lx, wrY + 20);
+  const bw2 = 200, bh2 = 6;
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  roundRect(ctx, lx, wrY + 28, bw2, bh2, 3); ctx.fill();
+  const f2 = Math.min(d.winRate/100,1)*bw2;
+  const bg2 = ctx.createLinearGradient(lx, 0, lx+f2, 0);
+  bg2.addColorStop(0, ACCENT); bg2.addColorStop(1, PROFIT);
+  ctx.fillStyle = bg2;
+  roundRect(ctx, lx, wrY + 28, f2, bh2, 3); ctx.fill();
+
+  // ── Divider ───────────────────────────────────────────────
+  vline(ctx, 460, 64, H - 88);
+
+  // ── Right: P&L + top collections ─────────────────────────
+  const rx = 492;
+
+  ctx.font = '10px monospace'; ctx.fillStyle = DIM;
+  ctx.fillText('P&L BREAKDOWN', rx, 76);
+
+  const pnlRows = [
+    { l: 'REALIZED',   eth: d.realizedPnlEth,   signed: true },
+    { l: 'UNREALIZED', eth: d.unrealizedPnlEth, signed: true },
+    { l: 'TOTAL P&L',  eth: d.totalPnlEth,      signed: true, big: true },
+  ];
+  pnlRows.forEach((r, i) => {
+    const ry = 98 + i * 68;
+    const rc = r.eth >= 0 ? PROFIT : LOSS;
+    const s = sign(r.eth);
+
+    ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+    ctx.fillText(r.l, rx, ry);
+
+    ctx.font = r.big ? 'bold 22px monospace' : 'bold 18px monospace';
+    ctx.fillStyle = rc;
+    if (r.big) { ctx.shadowColor = rc; ctx.shadowBlur = 10; }
+    ctx.fillText(`${s}${fEth(Math.abs(r.eth), 4)} Ξ`, rx, ry + 24);
+    ctx.shadowBlur = 0;
+
+    ctx.font = '10px monospace'; ctx.fillStyle = DIMMER;
+    ctx.textAlign = 'right';
+    ctx.fillText(`${s}${fUsd(Math.abs(r.eth * d.ethPriceUsd))}`, W - 20, ry + 24);
+    ctx.textAlign = 'left';
+
+    if (i < pnlRows.length - 1) hline(ctx, ry + 36, rx, W - 20, 0.05);
+  });
+
+  // ROI badge
+  const roiStr = fRoi(d.roiPct);
+  ctx.font = 'bold 12px monospace';
+  const rbw = ctx.measureText(roiStr).width + 18;
+  ctx.fillStyle = d.totalPnlEth >= 0 ? 'rgba(0,230,118,0.1)' : 'rgba(255,61,113,0.1)';
+  roundRect(ctx, rx, 306, rbw, 24, 4); ctx.fill();
+  ctx.strokeStyle = pCol; ctx.lineWidth = 1;
+  roundRect(ctx, rx, 306, rbw, 24, 4); ctx.stroke();
+  ctx.fillStyle = pCol; ctx.fillText(roiStr, rx + 9, 322);
+
+  // Top collections
+  hline(ctx, 344, rx, W - 20, 0.08);
+  ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+  ctx.fillText('TOP COLLECTIONS', rx, 362);
+
+  if (d.topCollections.length === 0) {
+    ctx.font = '11px monospace'; ctx.fillStyle = DIMMER;
+    ctx.fillText('sync a wallet to see collections', rx, 386);
   } else {
-    data.topCollections.slice(0, 3).forEach((c, i) => {
-      const cy = colY + 36 + i * 24;
-      const sign = c.pnlEth >= 0 ? '+' : '';
-      ctx.font = '11px monospace';
-      ctx.fillStyle = '#e8f4ff';
-      let cname = c.name.length > 18 ? c.name.slice(0, 17) + '…' : c.name;
-      ctx.fillText(`${i + 1}. ${cname}`, rx + 10, cy);
-      ctx.fillStyle = c.pnlEth >= 0 ? '#00ff88' : '#ff3355';
+    d.topCollections.slice(0, 3).forEach((c, i) => {
+      const cy = 380 + i * 24;
+      let name = c.name.length > 22 ? c.name.slice(0, 21) + '…' : c.name;
+      ctx.font = '12px monospace'; ctx.fillStyle = TEXT;
+      ctx.fillText(`${i+1}. ${name}`, rx, cy);
+      ctx.fillStyle = c.pnlEth >= 0 ? PROFIT : LOSS;
       ctx.textAlign = 'right';
-      ctx.fillText(`${sign}${fEth(c.pnlEth)} Ξ`, rx + rw - 10, cy);
+      ctx.fillText(`${sign(c.pnlEth)}${fEth(Math.abs(c.pnlEth), 4)} Ξ`, W - 20, cy);
       ctx.textAlign = 'left';
     });
   }
 
-  // ROI + win stats bottom-right
-  ctx.font = 'bold 11px monospace';
-  ctx.fillStyle = 'rgba(150,180,200,0.5)';
-  ctx.textAlign = 'right';
-  ctx.fillText(
-    `ROI ${fRoi(data.roiPct)}  ·  WIN RATE ${data.winRate.toFixed(0)}%  ·  ${data.wins}W/${data.losses}L`,
-    W - 16, H - 78,
-  );
-  ctx.fillText(data.username.toUpperCase(), W - 16, H - 92);
+  // ── Bottom stats ──────────────────────────────────────────
+  hline(ctx, H - 80, 0, W, 0.1);
+  const stats = [
+    { l: 'TRADES', v: `${d.totalTrades}` },
+    { l: 'BEST',   v: `+${fEth(d.bestTradeEth)} Ξ` },
+    { l: 'ROI',    v: fRoi(d.roiPct) },
+  ];
+  const sw = W / stats.length;
+  stats.forEach((s, i) => {
+    const sx = i * sw + sw/2;
+    ctx.font = '9px monospace'; ctx.fillStyle = DIMMER; ctx.textAlign = 'center';
+    ctx.fillText(s.l, sx, H - 58);
+    ctx.font = 'bold 14px monospace'; ctx.fillStyle = TEXT;
+    ctx.fillText(s.v, sx, H - 38);
+    if (i > 0) vline(ctx, i * sw, H - 80, H - 20);
+  });
   ctx.textAlign = 'left';
 
-  drawBottomPnl(ctx, W, H, data.totalPnlEth, data.totalPnlUsd, data.roiPct);
+  hline(ctx, H - 20, 0, W, 0.06);
+  ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+  ctx.textAlign = 'right';
+  ctx.fillText('CONN3CT PNL · Powered by OpenSea & Alchemy', W - 20, H - 7);
+  ctx.textAlign = 'left';
+
+  return canvas.toBuffer('image/png');
+}
+
+// ── Collection Profit Card (/profit) ─────────────────────────
+export interface CollectionPnlImageData {
+  collectionName: string;
+  collectionImageUrl?: string;
+  contractAddress: string;
+  walletLabel: string;
+  spentEth: number;
+  salesEth: number;
+  holdingValueEth: number;
+  gasFeeEth: number;
+  mintCount: number;
+  buyCount: number;
+  sellCount: number;
+  heldCount: number;
+  realizedPnlEth: number;
+  unrealizedPnlEth: number;
+  totalPnlEth: number;
+  totalPnlUsd: number;
+  roiPct: number;
+  ethPriceUsd: number;
+}
+
+export async function generatePnlImage(d: CollectionPnlImageData): Promise<Buffer> {
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  const pCol = d.totalPnlEth >= 0 ? PROFIT : LOSS;
+
+  drawBackground(ctx);
+
+  // ── Header ────────────────────────────────────────────────
+  const g = ctx.createLinearGradient(0, 0, W, 0);
+  g.addColorStop(0, '#0044cc'); g.addColorStop(0.5, '#2200aa'); g.addColorStop(1, '#440099');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 52);
+  ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#fff';
+  ctx.fillText('◈ CONN3CT', 20, 33);
+  ctx.font = 'bold 12px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.textAlign = 'center'; ctx.fillText('COLLECTION P&L', W/2, 33); ctx.textAlign = 'left';
+  ctx.font = '11px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.textAlign = 'right'; ctx.fillText(d.walletLabel, W - 20, 33); ctx.textAlign = 'left';
+
+  // ── Collection image (left panel) ────────────────────────
+  const imgSize = 180, imgX = 20, imgY = 68;
+  if (d.collectionImageUrl) {
+    try {
+      const img = await loadImage(d.collectionImageUrl);
+      ctx.save();
+      roundRect(ctx, imgX, imgY, imgSize, imgSize, 8); ctx.clip();
+      ctx.drawImage(img, imgX, imgY, imgSize, imgSize);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
+      roundRect(ctx, imgX, imgY, imgSize, imgSize, 8); ctx.stroke();
+    } catch {
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      roundRect(ctx, imgX, imgY, imgSize, imgSize, 8); ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    roundRect(ctx, imgX, imgY, imgSize, imgSize, 8); ctx.fill();
+  }
+
+  // Collection name + contract
+  ctx.font = 'bold 13px monospace'; ctx.fillStyle = TEXT;
+  ctx.textAlign = 'center';
+  let name = d.collectionName.toUpperCase();
+  while (ctx.measureText(name).width > 200 && name.length > 1) name = name.slice(0, -1);
+  if (name.length < d.collectionName.length) name += '…';
+  ctx.fillText(name, imgX + imgSize/2, imgY + imgSize + 22);
+  ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+  ctx.fillText(trunc(d.contractAddress), imgX + imgSize/2, imgY + imgSize + 38);
+
+  // Count badges
+  const badges = [
+    { l: 'MINT', v: d.mintCount },
+    { l: 'BUY',  v: d.buyCount },
+    { l: 'SELL', v: d.sellCount },
+    { l: 'HELD', v: d.heldCount },
+  ];
+  const bW = imgSize / 2;
+  badges.forEach((b, i) => {
+    const bx = imgX + (i % 2) * bW;
+    const by = imgY + imgSize + 52 + Math.floor(i/2) * 44;
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(bx + 2, by, bW - 4, 38);
+    ctx.font = '8px monospace'; ctx.fillStyle = DIMMER; ctx.textAlign = 'center';
+    ctx.fillText(b.l, bx + bW/2, by + 13);
+    ctx.font = 'bold 16px monospace'; ctx.fillStyle = b.v > 0 ? TEXT : DIMMER;
+    ctx.fillText(String(b.v), bx + bW/2, by + 30);
+  });
+  ctx.textAlign = 'left';
+
+  // ── Right: data rows ──────────────────────────────────────
+  vline(ctx, 224, 64, H - 80);
+  const rx = 244;
+  const dataRows = [
+    { l: 'SPENT',      v: d.spentEth,        signed: false },
+    { l: 'SALES',      v: d.salesEth,        signed: false },
+    { l: 'HOLDING',    v: d.holdingValueEth, signed: false },
+    { l: 'GAS FEES',   v: d.gasFeeEth,       signed: false },
+  ];
+  const rowH2 = (H - 52 - 88) / dataRows.length;
+  dataRows.forEach((r, i) => {
+    const ry = 64 + i * rowH2;
+    if (i > 0) hline(ctx, ry, rx, W - 20, 0.06);
+    ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+    ctx.fillText(r.l, rx, ry + 18);
+    ctx.font = 'bold 24px monospace'; ctx.fillStyle = TEXT;
+    ctx.fillText(`${fEth(r.v, 4)} Ξ`, rx, ry + 46);
+    ctx.font = '11px monospace'; ctx.fillStyle = DIMMER;
+    ctx.textAlign = 'right';
+    ctx.fillText(fUsd(r.v * d.ethPriceUsd), W - 20, ry + 46);
+    ctx.textAlign = 'left';
+  });
+
+  // ── Bottom P&L ────────────────────────────────────────────
+  hline(ctx, H - 80, 0, W, 0.12);
+  ctx.fillStyle = d.totalPnlEth >= 0 ? 'rgba(0,230,118,0.06)' : 'rgba(255,61,113,0.06)';
+  ctx.fillRect(0, H - 80, W, 80);
+
+  ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+  ctx.fillText('TOTAL P&L', 20, H - 58);
+
+  const s = sign(d.totalPnlEth);
+  ctx.font = 'bold 36px monospace'; ctx.fillStyle = pCol;
+  ctx.shadowColor = pCol; ctx.shadowBlur = 14;
+  ctx.fillText(`${s}${fEth(Math.abs(d.totalPnlEth), 4)} Ξ`, 20, H - 24);
+  ctx.shadowBlur = 0;
+
+  ctx.font = 'bold 18px monospace'; ctx.fillStyle = pCol;
+  ctx.fillText(`${s}${fUsd(Math.abs(d.totalPnlUsd))}`, 340, H - 24);
+
+  ctx.font = 'bold 18px monospace';
+  ctx.textAlign = 'right'; ctx.shadowColor = pCol; ctx.shadowBlur = 8;
+  ctx.fillText(fRoi(d.roiPct), W - 20, H - 24);
+  ctx.shadowBlur = 0; ctx.textAlign = 'left';
+
+  // Realized / Unrealized split
+  ctx.font = '9px monospace'; ctx.fillStyle = DIMMER;
+  ctx.textAlign = 'right';
+  ctx.fillText(
+    `REALIZED ${sign(d.realizedPnlEth)}${fEth(d.realizedPnlEth,4)} Ξ  ·  UNREALIZED ${sign(d.unrealizedPnlEth)}${fEth(d.unrealizedPnlEth,4)} Ξ`,
+    W - 20, H - 60,
+  );
+  ctx.textAlign = 'left';
+
   return canvas.toBuffer('image/png');
 }

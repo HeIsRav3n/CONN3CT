@@ -1,5 +1,12 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  AttachmentBuilder,
+  EmbedBuilder,
+  Colors,
+} from 'discord.js';
 import { upsertUser } from '../../database/repositories/userRepository';
+import { findWalletsByUserId } from '../../database/repositories/walletRepository';
 import { getPnlSummaryForUser } from '../../database/repositories/pnlRepository';
 import { getEthPriceUsd } from '../../api/ethereum/client';
 import { withCache } from '../../cache/redis';
@@ -13,8 +20,6 @@ export const pnlCommand = {
     .setDescription('View your complete NFT profit & loss card'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
-
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -22,6 +27,28 @@ export const pnlCommand = {
       interaction.user.displayAvatarURL(),
       interaction.guildId ?? undefined,
     );
+
+    // Pre-check: wallet must exist before deferring so we can reply ephemerally
+    const wallets = await findWalletsByUserId(interaction.user.id);
+    if (wallets.length === 0) {
+      await interaction.reply({
+        ephemeral: true,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(Colors.Blue)
+            .setTitle('Connect a Wallet First')
+            .setDescription(
+              'You haven\'t added a wallet yet.\n\n' +
+              'Use `/wallet-add address:0x...` to start tracking your NFTs.',
+            )
+            .setFooter({ text: 'CONN3CT PNL' }),
+        ],
+      });
+      return;
+    }
+
+    // Defer ephemerally — loading state visible only to user
+    await interaction.deferReply({ ephemeral: true });
 
     const [ethPriceUsd, summary] = await Promise.all([
       getEthPriceUsd().catch(() => 1800),
@@ -50,7 +77,9 @@ export const pnlCommand = {
       ethPriceUsd,
     });
 
-    await interaction.editReply({
+    // Remove the ephemeral "thinking" message, post the image publicly
+    await interaction.deleteReply();
+    await interaction.followUp({
       files: [new AttachmentBuilder(buf, { name: 'conn3ct-pnl.png' })],
     });
   },

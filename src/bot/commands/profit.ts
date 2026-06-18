@@ -33,33 +33,40 @@ export const profitCommand = {
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
-
     const contractRaw = interaction.options.getString('contract', true).trim();
     const walletInput = interaction.options.getString('wallet')?.trim().toLowerCase();
 
+    // Validate contract address before deferring so we can respond ephemerally
     if (!isValidEthAddress(contractRaw)) {
-      await interaction.editReply({
+      await interaction.reply({
+        ephemeral: true,
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Red)
             .setTitle('Invalid Contract Address')
-            .setDescription(`\`${contractRaw}\` is not a valid Ethereum address.`),
+            .setDescription(`\`${contractRaw}\` is not a valid Ethereum address (must start with 0x).`),
         ],
       });
       return;
     }
 
     const contractAddress = contractRaw.toLowerCase();
-    const wallets = await findWalletsByUserId(interaction.user.id);
 
+    // Pre-check: wallet must exist
+    const wallets = await findWalletsByUserId(interaction.user.id);
     if (wallets.length === 0) {
-      await interaction.editReply({
+      await interaction.reply({
+        ephemeral: true,
         embeds: [
           new EmbedBuilder()
-            .setColor(Colors.Orange)
-            .setTitle('No Wallets')
-            .setDescription('Add a wallet first with `/wallet add`.'),
+            .setColor(Colors.Blue)
+            .setTitle('Connect a Wallet First')
+            .setDescription(
+              'You haven\'t added a wallet yet.\n\n' +
+              'Use `/wallet-add address:0x...` to start tracking your NFTs.\n' +
+              'After adding, run `/refresh` to sync your trade history.',
+            )
+            .setFooter({ text: 'CONN3CT PNL' }),
         ],
       });
       return;
@@ -70,18 +77,24 @@ export const profitCommand = {
       : wallets;
 
     if (targetWallets.length === 0) {
-      await interaction.editReply({
+      await interaction.reply({
+        ephemeral: true,
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Red)
-            .setTitle('Wallet Not Tracked')
-            .setDescription(`\`${walletInput}\` is not in your tracked wallets. Use \`/wallet add\` first.`),
+            .setTitle('Wallet Not Found')
+            .setDescription(
+              `\`${walletInput}\` is not in your tracked wallets.\n\n` +
+              'Check your wallets with `/wallets`, or add it with `/wallet-add`.',
+            ),
         ],
       });
       return;
     }
 
-    // Aggregate across all target wallets
+    // Pre-checks passed — defer ephemerally for loading state
+    await interaction.deferReply({ ephemeral: true });
+
     let combined: Awaited<ReturnType<typeof getCollectionPnlForWallet>> = null;
 
     for (const wallet of targetWallets) {
@@ -91,13 +104,13 @@ export const profitCommand = {
       if (!combined) {
         combined = { ...stats };
       } else {
-        combined.spentEth += stats.spentEth;
-        combined.salesEth += stats.salesEth;
-        combined.gasFeeEth += stats.gasFeeEth;
-        combined.mintCount += stats.mintCount;
-        combined.buyCount += stats.buyCount;
-        combined.sellCount += stats.sellCount;
-        combined.heldCount += stats.heldCount;
+        combined.spentEth       += stats.spentEth;
+        combined.salesEth       += stats.salesEth;
+        combined.gasFeeEth      += stats.gasFeeEth;
+        combined.mintCount      += stats.mintCount;
+        combined.buyCount       += stats.buyCount;
+        combined.sellCount      += stats.sellCount;
+        combined.heldCount      += stats.heldCount;
         combined.realizedPnlEth += stats.realizedPnlEth;
         combined.unrealizedPnlEth += stats.unrealizedPnlEth;
       }
@@ -108,10 +121,10 @@ export const profitCommand = {
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Orange)
-            .setTitle('No Data Found')
+            .setTitle('No Activity Found')
             .setDescription(
-              `No activity found for \`${truncateAddress(contractAddress)}\`.\n` +
-              `Sync your wallet first with \`/refresh\`, then try again.`,
+              `No NFT activity found for \`${truncateAddress(contractAddress)}\`.\n\n` +
+              'Make sure you\'ve synced your wallet with `/refresh`, then try again.',
             ),
         ],
       });
@@ -150,14 +163,17 @@ export const profitCommand = {
       ethPriceUsd,
     });
 
-    const attachment = new AttachmentBuilder(imageBuffer, { name: 'conn3ct-pnl.png' });
-    await interaction.editReply({ files: [attachment] });
-
     log.info('Profit card generated', {
       userId: interaction.user.id,
       contract: contractAddress,
       pnlEth: totalPnlEth,
       roiPct,
+    });
+
+    // Remove the ephemeral "thinking" message, post the image publicly
+    await interaction.deleteReply();
+    await interaction.followUp({
+      files: [new AttachmentBuilder(imageBuffer, { name: 'conn3ct-profit.png' })],
     });
   },
 };
