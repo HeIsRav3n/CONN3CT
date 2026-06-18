@@ -1,0 +1,319 @@
+// ============================================================
+// CONN3CT PNL — Prisma Schema
+// PostgreSQL relational database — fully normalized
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Users ────────────────────────────────────────────────────
+model User {
+  id           String   @id @default(cuid())
+  discordId    String   @unique @map("discord_id")
+  username     String
+  discriminator String? @map("discriminator")
+  avatarUrl    String?  @map("avatar_url")
+  guildId      String?  @map("guild_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  lastSeenAt   DateTime? @map("last_seen_at")
+
+  wallets      Wallet[]
+  pnlRecords   PnlRecord[]
+  syncJobs     SyncJob[]
+
+  @@map("users")
+  @@index([discordId])
+  @@index([guildId])
+}
+
+// ── Wallets ──────────────────────────────────────────────────
+model Wallet {
+  id            String       @id @default(cuid())
+  userId        String       @map("user_id")
+  address       String       @unique
+  label         String?
+  status        WalletStatus @default(PENDING)
+  lastSyncAt    DateTime?    @map("last_sync_at")
+  lastSyncBlock BigInt?      @map("last_sync_block")
+  totalNfts     Int          @default(0) @map("total_nfts")
+  syncError     String?      @map("sync_error")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions  Transaction[]
+  holdings      Holding[]
+  pnlRecords    PnlRecord[]
+  syncJobs      SyncJob[]
+
+  @@map("wallets")
+  @@index([userId])
+  @@index([address])
+  @@index([status])
+}
+
+enum WalletStatus {
+  PENDING
+  SYNCING
+  SYNCED
+  ERROR
+  INACTIVE
+}
+
+// ── Collections ──────────────────────────────────────────────
+model Collection {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  contractAddress  String   @unique @map("contract_address")
+  contractType     String   @default("ERC721") @map("contract_type")
+  description      String?
+  imageUrl         String?  @map("image_url")
+  bannerUrl        String?  @map("banner_url")
+  externalUrl      String?  @map("external_url")
+  twitterUsername  String?  @map("twitter_username")
+  discordUrl       String?  @map("discord_url")
+  totalSupply      Int?     @map("total_supply")
+
+  // Market data (updated periodically)
+  floorPriceEth    Decimal? @db.Decimal(30, 18) @map("floor_price_eth")
+  floorPriceUsd    Decimal? @db.Decimal(20, 2) @map("floor_price_usd")
+  volume24hEth     Decimal? @db.Decimal(30, 18) @map("volume_24h_eth")
+  volume7dEth      Decimal? @db.Decimal(30, 18) @map("volume_7d_eth")
+  volumeAllTimeEth Decimal? @db.Decimal(30, 18) @map("volume_all_time_eth")
+  numOwners        Int?     @map("num_owners")
+  marketCapEth     Decimal? @db.Decimal(30, 18) @map("market_cap_eth")
+  royaltyBps       Int?     @default(0) @map("royalty_bps")
+  openseaFeeBps    Int?     @default(250) @map("opensea_fee_bps")
+
+  statsUpdatedAt   DateTime? @map("stats_updated_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  nfts             Nft[]
+
+  @@map("collections")
+  @@index([contractAddress])
+  @@index([slug])
+}
+
+// ── NFTs ─────────────────────────────────────────────────────
+model Nft {
+  id              String     @id @default(cuid())
+  tokenId         String     @map("token_id")
+  contractAddress String     @map("contract_address")
+  collectionId    String     @map("collection_id")
+  name            String?
+  description     String?
+  imageUrl        String?    @map("image_url")
+  animationUrl    String?    @map("animation_url")
+  externalUrl     String?    @map("external_url")
+  metadata        Json?
+  traits          Json?
+  rarityRank      Int?       @map("rarity_rank")
+  rarityScore     Decimal?   @db.Decimal(10, 4) @map("rarity_score")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  collection      Collection @relation(fields: [collectionId], references: [id])
+  transactions    Transaction[]
+  holdings        Holding[]
+  pnlRecords      PnlRecord[]
+
+  @@unique([tokenId, contractAddress])
+  @@map("nfts")
+  @@index([collectionId])
+  @@index([contractAddress])
+  @@index([tokenId])
+}
+
+// ── Transactions ─────────────────────────────────────────────
+model Transaction {
+  id                String          @id @default(cuid())
+  txHash            String          @map("tx_hash")
+  nftId             String          @map("nft_id")
+  walletId          String          @map("wallet_id")
+  counterpartyAddress String?       @map("counterparty_address")
+  eventType         TransactionType @map("event_type")
+  quantity          Int             @default(1)
+  priceEth          Decimal         @db.Decimal(30, 18) @map("price_eth")
+  priceUsd          Decimal?        @db.Decimal(20, 2) @map("price_usd")
+  ethPriceAtTime    Decimal?        @db.Decimal(20, 2) @map("eth_price_at_time")
+  gasUsed           BigInt?         @map("gas_used")
+  gasPriceWei       BigInt?         @map("gas_price_wei")
+  gasFeeEth         Decimal?        @db.Decimal(30, 18) @map("gas_fee_eth")
+  gasFeeUsd         Decimal?        @db.Decimal(20, 2) @map("gas_fee_usd")
+  marketplaceFeeEth Decimal?        @db.Decimal(30, 18) @map("marketplace_fee_eth")
+  marketplaceFeePct Decimal?        @db.Decimal(10, 4) @map("marketplace_fee_pct")
+  royaltyFeeEth     Decimal?        @db.Decimal(30, 18) @map("royalty_fee_eth")
+  royaltyFeePct     Decimal?        @db.Decimal(10, 4) @map("royalty_fee_pct")
+  marketplace       String?
+  blockNumber       BigInt?         @map("block_number")
+  logIndex          Int?            @map("log_index")
+  timestamp         DateTime
+  processedAt       DateTime?       @map("processed_at")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  nft               Nft             @relation(fields: [nftId], references: [id])
+  wallet            Wallet          @relation(fields: [walletId], references: [id])
+  pnlRecord         PnlRecord?
+
+  @@unique([txHash, nftId, eventType])
+  @@map("transactions")
+  @@index([walletId])
+  @@index([nftId])
+  @@index([txHash])
+  @@index([timestamp])
+  @@index([eventType])
+  @@index([walletId, timestamp])
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  TRANSFER_IN
+  TRANSFER_OUT
+  MINT
+  AIRDROP
+  BURN
+}
+
+// ── Holdings ─────────────────────────────────────────────────
+model Holding {
+  id              String   @id @default(cuid())
+  nftId           String   @map("nft_id")
+  walletId        String   @map("wallet_id")
+  costBasisEth    Decimal  @db.Decimal(30, 18) @map("cost_basis_eth")
+  costBasisUsd    Decimal? @db.Decimal(20, 2) @map("cost_basis_usd")
+  gasFeeEth       Decimal  @db.Decimal(30, 18) @default(0) @map("gas_fee_eth")
+  acquisitionTxId String?  @map("acquisition_tx_id")
+  acquisitionDate DateTime @map("acquisition_date")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  nft             Nft      @relation(fields: [nftId], references: [id])
+  wallet          Wallet   @relation(fields: [walletId], references: [id])
+
+  @@unique([nftId, walletId])
+  @@map("holdings")
+  @@index([walletId])
+  @@index([nftId])
+}
+
+// ── P&L Records ──────────────────────────────────────────────
+model PnlRecord {
+  id                 String    @id @default(cuid())
+  userId             String    @map("user_id")
+  walletId           String    @map("wallet_id")
+  nftId              String    @map("nft_id")
+  sellTransactionId  String?   @unique @map("sell_transaction_id")
+  costBasisEth       Decimal   @db.Decimal(30, 18) @map("cost_basis_eth")
+  salePriceEth       Decimal?  @db.Decimal(30, 18) @map("sale_price_eth")
+  buyGasFeeEth       Decimal   @db.Decimal(30, 18) @default(0) @map("buy_gas_fee_eth")
+  sellGasFeeEth      Decimal?  @db.Decimal(30, 18) @map("sell_gas_fee_eth")
+  marketplaceFeeEth  Decimal?  @db.Decimal(30, 18) @map("marketplace_fee_eth")
+  royaltyFeeEth      Decimal?  @db.Decimal(30, 18) @map("royalty_fee_eth")
+  totalCostEth       Decimal   @db.Decimal(30, 18) @map("total_cost_eth")
+  netProceedsEth     Decimal?  @db.Decimal(30, 18) @map("net_proceeds_eth")
+  realizedPnlEth     Decimal?  @db.Decimal(30, 18) @map("realized_pnl_eth")
+  realizedPnlUsd     Decimal?  @db.Decimal(20, 2) @map("realized_pnl_usd")
+  unrealizedPnlEth   Decimal?  @db.Decimal(30, 18) @map("unrealized_pnl_eth")
+  unrealizedPnlUsd   Decimal?  @db.Decimal(20, 2) @map("unrealized_pnl_usd")
+  roiPct             Decimal?  @db.Decimal(10, 4) @map("roi_pct")
+  isRealized         Boolean   @default(false) @map("is_realized")
+  holdDurationDays   Int?      @map("hold_duration_days")
+  soldAt             DateTime? @map("sold_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user               User      @relation(fields: [userId], references: [id])
+  wallet             Wallet    @relation(fields: [walletId], references: [id])
+  nft                Nft       @relation(fields: [nftId], references: [id])
+  sellTransaction    Transaction? @relation(fields: [sellTransactionId], references: [id])
+
+  @@map("pnl_records")
+  @@index([userId])
+  @@index([walletId])
+  @@index([nftId])
+  @@index([isRealized])
+  @@index([userId, isRealized])
+}
+
+// ── Sync Jobs ─────────────────────────────────────────────────
+model SyncJob {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  walletId    String    @map("wallet_id")
+  jobType     SyncJobType @map("job_type")
+  status      SyncJobStatus @default(PENDING) @map("status")
+  progress    Int       @default(0)
+  totalItems  Int?      @map("total_items")
+  processedItems Int    @default(0) @map("processed_items")
+  errorMessage String?  @map("error_message")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation(fields: [userId], references: [id])
+  wallet      Wallet    @relation(fields: [walletId], references: [id])
+
+  @@map("sync_jobs")
+  @@index([walletId])
+  @@index([status])
+  @@index([userId, status])
+}
+
+enum SyncJobType {
+  FULL_HISTORY
+  INCREMENTAL
+  PRICE_UPDATE
+  PNL_RECALCULATE
+}
+
+enum SyncJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ── ETH Price History ─────────────────────────────────────────
+model EthPriceHistory {
+  id        String   @id @default(cuid())
+  priceUsd  Decimal  @db.Decimal(20, 2) @map("price_usd")
+  timestamp DateTime @unique
+  source    String   @default("coingecko")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("eth_price_history")
+  @@index([timestamp])
+}
+
+// ── Audit Log ─────────────────────────────────────────────────
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  metadata   Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}

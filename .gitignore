@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.npm
+
+# Build output
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.test.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Database
+*.db
+*.sqlite
+
+# Prisma
+prisma/migrations/*.sql.bak
+
+# Coverage
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Kubernetes secrets (never commit)
+k8s/secret.yaml

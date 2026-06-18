@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: conn3ct-pnl-config
+  namespace: conn3ct-pnl
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_TLS: "false"
+  ALCHEMY_NETWORK: "eth-mainnet"
+  OPENSEA_BASE_URL: "https://api.opensea.io/api/v2"
+  OPENSEA_RATE_LIMIT_RPS: "4"
+  SYNC_WORKER_CONCURRENCY: "5"
+  PRICE_WORKER_CONCURRENCY: "3"
+  PNL_WORKER_CONCURRENCY: "10"
+  WALLET_SYNC_INTERVAL_MS: "300000"
+  PRICE_UPDATE_INTERVAL_MS: "600000"
+  DATABASE_POOL_MIN: "2"
+  DATABASE_POOL_MAX: "20"

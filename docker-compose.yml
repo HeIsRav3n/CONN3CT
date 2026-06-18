@@ -1,0 +1,157 @@
+version: "3.9"
+
+# ============================================================
+# CONN3CT PNL — Docker Compose (Development + Production)
+# ============================================================
+
+services:
+  # ── Application ──────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: conn3ct-pnl-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-conn3ct}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-conn3ct_pnl}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - conn3ct-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Database migration (run-once init) ────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: conn3ct-pnl-migrate
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-conn3ct}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-conn3ct_pnl}
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - conn3ct-network
+    restart: no
+
+  # ── PostgreSQL ───────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: conn3ct-pnl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-conn3ct}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-conn3ct_pnl}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - conn3ct-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-conn3ct} -d ${POSTGRES_DB:-conn3ct_pnl}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Redis ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: conn3ct-pnl-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - conn3ct-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Prometheus ───────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: conn3ct-pnl-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+    networks:
+      - conn3ct-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+
+  # ── Grafana ──────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: conn3ct-pnl-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - conn3ct-network
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+    name: conn3ct_postgres_data
+  redis_data:
+    name: conn3ct_redis_data
+  prometheus_data:
+    name: conn3ct_prometheus_data
+  grafana_data:
+    name: conn3ct_grafana_data
+
+networks:
+  conn3ct-network:
+    name: conn3ct-pnl
+    driver: bridge
