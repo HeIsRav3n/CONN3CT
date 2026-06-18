@@ -307,3 +307,376 @@ export async function generatePnlImage(data: CollectionPnlImageData): Promise<Bu
 
   return canvas.toBuffer('image/png');
 }
+
+// ── Shared canvas helpers ─────────────────────────────────────
+function drawBg(ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>, w: number, h: number): void {
+  ctx.fillStyle = '#07070f';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(0,180,255,0.04)';
+  for (let x = 20; x < w; x += 28)
+    for (let y = 20; y < h; y += 28) {
+      ctx.beginPath(); ctx.arc(x, y, 1, 0, Math.PI * 2); ctx.fill();
+    }
+}
+
+function drawTopBar(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  w: number, label: string, right: string,
+): void {
+  ctx.fillStyle = 'rgba(0,180,255,0.06)';
+  ctx.fillRect(0, 0, w, 44);
+  ctx.strokeStyle = 'rgba(0,180,255,0.25)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 44); ctx.lineTo(w, 44); ctx.stroke();
+  ctx.font = 'bold 13px monospace';
+  ctx.fillStyle = '#00d4ff';
+  ctx.fillText('◈ CONN3CT', 14, 27);
+  ctx.fillStyle = 'rgba(0,212,255,0.5)';
+  ctx.font = '11px monospace';
+  ctx.fillText(label, 100, 27);
+  ctx.fillStyle = 'rgba(150,180,200,0.55)';
+  ctx.textAlign = 'right';
+  ctx.fillText(right, w - 16, 27);
+  ctx.textAlign = 'left';
+}
+
+function drawBottomPnl(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  w: number, h: number, totalEth: number, totalUsd: number, roi: number,
+): void {
+  const btmH = 72;
+  const btmY = h - btmH;
+  const isProfit = totalEth >= 0;
+  const col = isProfit ? '#00ff88' : '#ff3355';
+  ctx.fillStyle = isProfit ? 'rgba(0,255,136,0.07)' : 'rgba(255,51,85,0.07)';
+  ctx.fillRect(0, btmY, w, btmH);
+  ctx.strokeStyle = isProfit ? 'rgba(0,255,136,0.35)' : 'rgba(255,51,85,0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, btmY); ctx.lineTo(w, btmY); ctx.stroke();
+
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.5)';
+  ctx.fillText('TOTAL P&L', 20, btmY + 18);
+
+  const sign = totalEth >= 0 ? '+' : '-';
+  ctx.font = 'bold 34px monospace';
+  ctx.fillStyle = col;
+  ctx.shadowColor = col; ctx.shadowBlur = 12;
+  ctx.fillText(`${sign}${fEth(Math.abs(totalEth))} Ξ`, 20, btmY + 56);
+  ctx.shadowBlur = 0;
+
+  ctx.font = 'bold 18px monospace';
+  ctx.fillStyle = col;
+  ctx.fillText(`${sign}${fUsd(Math.abs(totalUsd))}`, 310, btmY + 56);
+
+  ctx.textAlign = 'right';
+  ctx.shadowColor = col; ctx.shadowBlur = 8;
+  ctx.fillText(fRoi(roi), w - 16, btmY + 56);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
+}
+
+// ── PNL Overview Card ─────────────────────────────────────────
+export interface PnlCardData {
+  username: string;
+  avatarUrl?: string;
+  realizedPnlEth: number;
+  unrealizedPnlEth: number;
+  totalPnlEth: number;
+  totalPnlUsd: number;
+  costBasisEth: number;
+  roiPct: number;
+  winRate: number;
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  bestTradeEth: number;
+  worstTradeEth: number;
+  avgHoldDays: number;
+  ethPriceUsd: number;
+}
+
+export async function generatePnlCard(data: PnlCardData): Promise<Buffer> {
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  drawBg(ctx, W, H);
+  drawTopBar(ctx, W, 'PNL TERMINAL', `ETH: ${fUsd(data.ethPriceUsd)}`);
+
+  const col = data.totalPnlEth >= 0 ? '#00ff88' : '#ff3355';
+  const MID = W / 2;
+  const TOP = 56;
+
+  // ── Left column: P&L breakdown ────────────────────────────
+  const leftItems = [
+    { label: 'REALIZED P&L', eth: data.realizedPnlEth, signed: true },
+    { label: 'UNREALIZED P&L', eth: data.unrealizedPnlEth, signed: true },
+    { label: 'COST BASIS', eth: data.costBasisEth, signed: false },
+  ];
+
+  leftItems.forEach((item, i) => {
+    const y = TOP + i * 108;
+    const isPos = item.eth >= 0;
+    const itemCol = item.signed ? (isPos ? '#00ff88' : '#ff3355') : '#e8f4ff';
+
+    ctx.fillStyle = 'rgba(0,180,255,0.08)';
+    ctx.fillRect(16, y, MID - 32, 92);
+    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(16, y, MID - 32, 92);
+
+    // Accent top bar
+    ctx.fillStyle = item.signed ? (isPos ? '#00ff88' : '#ff3355') : '#00d4ff';
+    ctx.fillRect(16, y, MID - 32, 2);
+
+    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.55)';
+    ctx.fillText(item.label, 26, y + 18);
+
+    const sign = item.signed ? (item.eth >= 0 ? '+' : '-') : '';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillStyle = itemCol;
+    if (item.signed) { ctx.shadowColor = itemCol; ctx.shadowBlur = 8; }
+    ctx.fillText(`${sign}${fEth(Math.abs(item.eth))} Ξ`, 26, y + 52);
+    ctx.shadowBlur = 0;
+
+    ctx.font = '12px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.5)';
+    ctx.fillText(`${sign}${fUsd(Math.abs(item.eth * data.ethPriceUsd))}`, 26, y + 74);
+  });
+
+  // ── Right column: Performance ─────────────────────────────
+  const rx = MID + 16;
+  const rw = W - rx - 16;
+
+  // ROI box
+  ctx.fillStyle = 'rgba(0,180,255,0.08)';
+  ctx.fillRect(rx, TOP, rw, 88);
+  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rx, TOP, rw, 88);
+  ctx.fillStyle = '#00d4ff';
+  ctx.fillRect(rx, TOP, rw, 2);
+
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.55)';
+  ctx.fillText('OVERALL ROI', rx + 10, TOP + 18);
+
+  ctx.font = 'bold 30px monospace';
+  ctx.fillStyle = col;
+  ctx.shadowColor = col; ctx.shadowBlur = 10;
+  ctx.fillText(fRoi(data.roiPct), rx + 10, TOP + 60);
+  ctx.shadowBlur = 0;
+
+  // Win rate box
+  const wrY = TOP + 104;
+  ctx.fillStyle = 'rgba(0,180,255,0.08)';
+  ctx.fillRect(rx, wrY, rw, 92);
+  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+  ctx.strokeRect(rx, wrY, rw, 92);
+  ctx.fillStyle = '#00d4ff';
+  ctx.fillRect(rx, wrY, rw, 2);
+
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.55)';
+  ctx.fillText('WIN RATE', rx + 10, wrY + 18);
+
+  ctx.font = 'bold 22px monospace';
+  ctx.fillStyle = data.winRate >= 50 ? '#00ff88' : '#ff3355';
+  ctx.fillText(`${data.winRate.toFixed(1)}%`, rx + 10, wrY + 48);
+
+  // Progress bar
+  const barX = rx + 10, barY = wrY + 60, barW = rw - 20, barH = 14;
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(barX, barY, barW, barH);
+  const fill = (data.winRate / 100) * barW;
+  const barGrad = ctx.createLinearGradient(barX, 0, barX + fill, 0);
+  barGrad.addColorStop(0, '#00d4ff');
+  barGrad.addColorStop(1, '#00ff88');
+  ctx.fillStyle = barGrad;
+  ctx.fillRect(barX, barY, fill, barH);
+
+  // Trade stats
+  const trY = TOP + 212;
+  ctx.fillStyle = 'rgba(0,180,255,0.08)';
+  ctx.fillRect(rx, trY, rw, 116);
+  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+  ctx.strokeRect(rx, trY, rw, 116);
+  ctx.fillStyle = '#00d4ff';
+  ctx.fillRect(rx, trY, rw, 2);
+
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.55)';
+  ctx.fillText('PERFORMANCE', rx + 10, trY + 18);
+
+  const perfRows = [
+    { label: 'TRADES', val: `${data.totalTrades}  (${data.wins}W / ${data.losses}L)` },
+    { label: 'BEST', val: `+${fEth(data.bestTradeEth)} Ξ` },
+    { label: 'WORST', val: `${data.worstTradeEth >= 0 ? '+' : ''}${fEth(data.worstTradeEth)} Ξ` },
+    { label: 'AVG HOLD', val: `${data.avgHoldDays}d` },
+  ];
+  perfRows.forEach((r, i) => {
+    const ry2 = trY + 36 + i * 20;
+    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.45)';
+    ctx.fillText(r.label, rx + 10, ry2);
+    ctx.fillStyle = '#e8f4ff';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(r.val, rx + rw - 10, ry2);
+    ctx.textAlign = 'left';
+  });
+
+  // Username
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.5)';
+  ctx.textAlign = 'right';
+  ctx.fillText(data.username.toUpperCase(), W - 16, H - 78);
+  ctx.textAlign = 'left';
+
+  drawBottomPnl(ctx, W, H, data.totalPnlEth, data.totalPnlUsd, data.roiPct);
+  return canvas.toBuffer('image/png');
+}
+
+// ── Portfolio Overview Card ───────────────────────────────────
+export interface PortfolioCardData {
+  username: string;
+  walletCount: number;
+  totalHoldings: number;
+  portfolioValueEth: number;
+  portfolioValueUsd: number;
+  costBasisEth: number;
+  gasFeeEth: number;
+  realizedPnlEth: number;
+  unrealizedPnlEth: number;
+  totalPnlEth: number;
+  totalPnlUsd: number;
+  roiPct: number;
+  winRate: number;
+  wins: number;
+  losses: number;
+  totalTrades: number;
+  bestTradeEth: number;
+  topCollections: { name: string; holdings: number; pnlEth: number }[];
+  ethPriceUsd: number;
+}
+
+export async function generatePortfolioCard(data: PortfolioCardData): Promise<Buffer> {
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  drawBg(ctx, W, H);
+  drawTopBar(
+    ctx, W, 'PORTFOLIO',
+    `${data.totalHoldings} NFTs · ${data.walletCount} wallet${data.walletCount !== 1 ? 's' : ''}`,
+  );
+
+  const col = data.totalPnlEth >= 0 ? '#00ff88' : '#ff3355';
+  const TOP = 56;
+  const MID = W / 2;
+
+  // ── Left: value + cost + gas ──────────────────────────────
+  const leftBoxes = [
+    { label: 'PORTFOLIO VALUE', eth: data.portfolioValueEth, usd: data.portfolioValueUsd, accent: '#00d4ff' },
+    { label: 'COST BASIS',      eth: data.costBasisEth, usd: data.costBasisEth * data.ethPriceUsd, accent: '#00d4ff' },
+    { label: 'GAS SPENT',       eth: data.gasFeeEth, usd: data.gasFeeEth * data.ethPriceUsd, accent: '#ff9d3d' },
+  ];
+  leftBoxes.forEach((b, i) => {
+    const y = TOP + i * 108;
+    ctx.fillStyle = 'rgba(0,180,255,0.08)';
+    ctx.fillRect(16, y, MID - 32, 92);
+    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(16, y, MID - 32, 92);
+    ctx.fillStyle = b.accent;
+    ctx.fillRect(16, y, MID - 32, 2);
+
+    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.55)';
+    ctx.fillText(b.label, 26, y + 18);
+
+    ctx.font = 'bold 24px monospace';
+    ctx.fillStyle = '#e8f4ff';
+    ctx.fillText(`${fEth(b.eth)} Ξ`, 26, y + 52);
+
+    ctx.font = '12px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.5)';
+    ctx.fillText(fUsd(b.usd), 26, y + 74);
+  });
+
+  // ── Right: P&L split + collections ───────────────────────
+  const rx = MID + 16;
+  const rw = W - rx - 16;
+
+  // Realized / Unrealized
+  [[data.realizedPnlEth, 'REALIZED P&L'], [data.unrealizedPnlEth, 'UNREALIZED P&L']].forEach(([eth, label], i) => {
+    const n = eth as number;
+    const y2 = TOP + i * 108;
+    const itemCol = n >= 0 ? '#00ff88' : '#ff3355';
+    ctx.fillStyle = 'rgba(0,180,255,0.08)';
+    ctx.fillRect(rx, y2, rw, 92);
+    ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+    ctx.strokeRect(rx, y2, rw, 92);
+    ctx.fillStyle = itemCol;
+    ctx.fillRect(rx, y2, rw, 2);
+
+    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.55)';
+    ctx.fillText(label as string, rx + 10, y2 + 18);
+
+    const sign = n >= 0 ? '+' : '-';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillStyle = itemCol;
+    ctx.shadowColor = itemCol; ctx.shadowBlur = 6;
+    ctx.fillText(`${sign}${fEth(Math.abs(n))} Ξ`, rx + 10, y2 + 50);
+    ctx.shadowBlur = 0;
+
+    ctx.font = '12px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.5)';
+    ctx.fillText(`${sign}${fUsd(Math.abs(n * data.ethPriceUsd))}`, rx + 10, y2 + 72);
+  });
+
+  // Top collections
+  const colY = TOP + 220;
+  ctx.fillStyle = 'rgba(0,180,255,0.08)';
+  ctx.fillRect(rx, colY, rw, 108);
+  ctx.strokeStyle = 'rgba(0,180,255,0.15)';
+  ctx.strokeRect(rx, colY, rw, 108);
+  ctx.fillStyle = '#00d4ff';
+  ctx.fillRect(rx, colY, rw, 2);
+
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.55)';
+  ctx.fillText('TOP COLLECTIONS', rx + 10, colY + 18);
+
+  if (data.topCollections.length === 0) {
+    ctx.font = '11px monospace';
+    ctx.fillStyle = 'rgba(150,180,200,0.3)';
+    ctx.fillText('no collections synced yet', rx + 10, colY + 60);
+  } else {
+    data.topCollections.slice(0, 3).forEach((c, i) => {
+      const cy = colY + 36 + i * 24;
+      const sign = c.pnlEth >= 0 ? '+' : '';
+      ctx.font = '11px monospace';
+      ctx.fillStyle = '#e8f4ff';
+      let cname = c.name.length > 18 ? c.name.slice(0, 17) + '…' : c.name;
+      ctx.fillText(`${i + 1}. ${cname}`, rx + 10, cy);
+      ctx.fillStyle = c.pnlEth >= 0 ? '#00ff88' : '#ff3355';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${sign}${fEth(c.pnlEth)} Ξ`, rx + rw - 10, cy);
+      ctx.textAlign = 'left';
+    });
+  }
+
+  // ROI + win stats bottom-right
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = 'rgba(150,180,200,0.5)';
+  ctx.textAlign = 'right';
+  ctx.fillText(
+    `ROI ${fRoi(data.roiPct)}  ·  WIN RATE ${data.winRate.toFixed(0)}%  ·  ${data.wins}W/${data.losses}L`,
+    W - 16, H - 78,
+  );
+  ctx.fillText(data.username.toUpperCase(), W - 16, H - 92);
+  ctx.textAlign = 'left';
+
+  drawBottomPnl(ctx, W, H, data.totalPnlEth, data.totalPnlUsd, data.roiPct);
+  return canvas.toBuffer('image/png');
+}
