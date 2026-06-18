@@ -15,6 +15,7 @@ import { pnlCommand } from '../commands/pnl';
 import { tradeHistoryCommand } from '../commands/tradeHistory';
 import { leaderboardCommand } from '../commands/leaderboard';
 import { collectionCommand } from '../commands/collection';
+import { profitCommand } from '../commands/profit';
 import { createChildLogger } from '../../utils/logger';
 import { upsertUser } from '../../database/repositories/userRepository';
 
@@ -66,6 +67,7 @@ const allCommands: BotCommand[] = [
   tradeHistoryCommand,
   leaderboardCommand,
   collectionCommand,
+  profitCommand,
 ];
 
 for (const cmd of allCommands) {
