@@ -13,7 +13,7 @@ export async function startScheduler(): Promise<void> {
   const cfg = getConfig();
 
   // ── Repeatable: price update every 10 minutes ─────────────
-  await (priceQueue.add as Function)(
+  await (priceQueue.add as any)(
     'scheduled-price-update',
     { updateAll: true },
     {
@@ -23,7 +23,7 @@ export async function startScheduler(): Promise<void> {
   );
 
   // ── Repeatable: wallet incremental sync every 5 minutes ───
-  await (syncQueue.add as Function)(
+  await (syncQueue.add as any)(
     'scheduled-incremental-sync',
     { trigger: 'scheduler' },
     {
@@ -52,7 +52,7 @@ export async function scheduleIncrementalSyncs(): Promise<void> {
       },
     });
 
-    await (syncQueue.add as Function)(
+    await (syncQueue.add as any)(
       `incremental-${wallet.address}`,
       {
         userId: wallet.userId,

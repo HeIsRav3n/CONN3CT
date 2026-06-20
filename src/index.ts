@@ -113,7 +113,6 @@ async function bootstrap(): Promise<void> {
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     log.error('HTTP server error', { error: err.message });
-    if (err.code === 'EADDRINUSE') process.exit(1);
   });
 
   // ── 6. Start Discord bot ───────────────────────────────────

@@ -29,7 +29,7 @@ export const pnlCommand = {
     );
 
     // Pre-check: wallet must exist before deferring so we can reply ephemerally
-    const wallets = await findWalletsByUserId(interaction.user.id);
+    const wallets = await findWalletsByUserId(user.id);
     if (wallets.length === 0) {
       await interaction.reply({
         ephemeral: true,

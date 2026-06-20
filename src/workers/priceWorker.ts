@@ -41,23 +41,31 @@ export function createPriceWorker(): Worker<PriceUpdateJobData> {
       for (const collection of staleCollections) {
         try {
           const stats = await opensea.getCollectionStats(collection.slug);
+          if (!stats || !stats.total) {
+            log.warn('No stats or total found for collection', { slug: collection.slug });
+            continue;
+          }
           const total = stats.total;
+          const floorPrice = total.floor_price ?? 0;
+          const volume = total.volume ?? 0;
+          const marketCap = total.market_cap ?? 0;
+          const numOwners = total.num_owners ?? 0;
 
           await updateCollectionStats(collection.id, {
-            floorPriceEth: total.floor_price.toFixed(18),
-            volumeAllTimeEth: total.volume.toFixed(18),
-            numOwners: total.num_owners,
-            marketCapEth: total.market_cap.toFixed(18),
+            floorPriceEth: floorPrice.toFixed(18),
+            volumeAllTimeEth: volume.toFixed(18),
+            numOwners: numOwners,
+            marketCapEth: marketCap.toFixed(18),
           });
 
           // Cache individual floor price
           await cacheSet(
             CK.floorPrice(collection.slug),
-            total.floor_price,
+            floorPrice,
             TTL.FLOOR_PRICE,
           );
 
-          log.debug('Updated floor price', { slug: collection.slug, floor: total.floor_price });
+          log.debug('Updated floor price', { slug: collection.slug, floor: floorPrice });
         } catch (err: any) {
           log.warn('Failed to update collection price', {
             slug: collection.slug,
