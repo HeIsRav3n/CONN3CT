@@ -20,6 +20,9 @@ export const pnlCommand = {
     .setDescription('View your complete NFT profit & loss card'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    // ── Defer immediately — Discord requires a response within 3s ─
+    await interaction.deferReply({ ephemeral: true });
+
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -28,11 +31,9 @@ export const pnlCommand = {
       interaction.guildId ?? undefined,
     );
 
-    // Pre-check: wallet must exist before deferring so we can reply ephemerally
     const wallets = await findWalletsByUserId(user.id);
     if (wallets.length === 0) {
-      await interaction.reply({
-        ephemeral: true,
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Blue)
@@ -46,9 +47,6 @@ export const pnlCommand = {
       });
       return;
     }
-
-    // Defer ephemerally — loading state visible only to user
-    await interaction.deferReply({ ephemeral: true });
 
     const [ethPriceUsd, summary] = await Promise.all([
       getEthPriceUsd().catch(() => 1800),

@@ -67,6 +67,9 @@ export const leaderboardCommand = {
       return;
     }
 
+    // ── Batch all user lookups in parallel — eliminates N+1 DB queries ─
+    const users = await Promise.all(entries.map((e) => findUserById(e.userId)));
+
     const embed = new EmbedBuilder()
       .setColor(0xffd700)
       .setTitle('🏆 CONN3CT PNL Leaderboard')
@@ -78,8 +81,7 @@ export const leaderboardCommand = {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i]!;
       const rank = RANK_EMOJI[i] ?? `#${i + 1}`;
-      const user = await findUserById(entry.userId);
-      const username = user?.username ?? 'Unknown Trader';
+      const username = users[i]?.username ?? 'Unknown Trader';
       const pnlEth = entry.totalRealizedPnlEth.toFixed(18);
       const pnlUsd = ethToUsd(pnlEth, ethPrice);
 

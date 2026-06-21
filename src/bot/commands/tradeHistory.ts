@@ -4,8 +4,6 @@ import {
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  SelectMenuBuilder,
-  StringSelectMenuBuilder,
   ButtonStyle,
   Colors,
 } from 'discord.js';
@@ -50,6 +48,9 @@ export const tradeHistoryCommand = {
     const sortRaw = interaction.options.getString('sort') ?? 'date_desc';
     const [sortBy, sortDir] = sortRaw.split('_') as ['date' | 'pnl' | 'roi', 'asc' | 'desc'];
 
+    // ── Defer immediately — Discord requires a response within 3s ─
+    await interaction.deferReply({ ephemeral: true });
+
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -57,8 +58,6 @@ export const tradeHistoryCommand = {
       interaction.user.displayAvatarURL(),
       interaction.guildId ?? undefined,
     );
-
-    await interaction.deferReply({ ephemeral: true });
 
     const ethPrice = await getEthPriceUsd();
     const { records, total } = await getTradeHistory(user.id, {

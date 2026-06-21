@@ -38,6 +38,7 @@ export const profitCommand = {
     const contractRaw = interaction.options.getString('contract', true).trim();
     const walletInput = interaction.options.getString('wallet')?.trim().toLowerCase();
 
+    // ── Validate address synchronously before any async work ──
     if (!isValidEthAddress(contractRaw)) {
       await interaction.reply({
         ephemeral: true,
@@ -53,6 +54,9 @@ export const profitCommand = {
 
     const contractAddress = contractRaw.toLowerCase();
 
+    // ── Defer immediately — all async work happens after this ─
+    await interaction.deferReply({ ephemeral: true });
+
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -63,8 +67,7 @@ export const profitCommand = {
 
     const wallets = await findWalletsByUserId(user.id);
     if (wallets.length === 0) {
-      await interaction.reply({
-        ephemeral: true,
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Blue)
@@ -85,8 +88,7 @@ export const profitCommand = {
       : wallets;
 
     if (targetWallets.length === 0) {
-      await interaction.reply({
-        ephemeral: true,
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Red)
@@ -99,9 +101,6 @@ export const profitCommand = {
       });
       return;
     }
-
-    // Pre-checks passed — defer ephemerally while we do the heavy lifting
-    await interaction.deferReply({ ephemeral: true });
 
     let combined: Awaited<ReturnType<typeof getCollectionPnlForWallet>> = null;
 

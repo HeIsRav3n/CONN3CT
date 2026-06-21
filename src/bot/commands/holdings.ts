@@ -34,6 +34,10 @@ export const holdingsCommand = {
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const page = interaction.options.getInteger('page') ?? 1;
+
+    // ── Defer immediately — Discord requires a response within 3s ─
+    await interaction.deferReply({ ephemeral: true });
+
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -41,8 +45,6 @@ export const holdingsCommand = {
       interaction.user.displayAvatarURL(),
       interaction.guildId ?? undefined,
     );
-
-    await interaction.deferReply({ ephemeral: true });
 
     const ethPrice = await getEthPriceUsd();
     const allHoldings = await buildHoldingDetails(user.id, ethPrice);

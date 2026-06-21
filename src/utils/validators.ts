@@ -1,15 +1,9 @@
 import { ethers } from 'ethers';
 
 export function isValidEthAddress(address: string): boolean {
-  // Require explicit 0x prefix and 40-char hex body
-  if (!address.startsWith('0x') || address.length !== 42) return false;
-  // Validate checksum via ethers (throws on invalid hex or bad EIP-55 checksum)
-  try {
-    ethers.getAddress(address);
-    return true;
-  } catch {
-    return false;
-  }
+  // Accept any syntactically valid Ethereum address (checksummed or lowercase)
+  // ethers.isAddress handles 0x-prefixed 20-byte hex in any case form
+  return ethers.isAddress(address);
 }
 
 export function normalizeAddress(address: string): string {

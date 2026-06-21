@@ -28,7 +28,7 @@ export const collectionCommand = {
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
+    await interaction.deferReply({ ephemeral: true });
 
     const slug = interaction.options.getString('slug', true).toLowerCase().trim();
     const user = await upsertUser(

@@ -19,6 +19,9 @@ export const portfolioCommand = {
     .setDescription('View your complete NFT portfolio dashboard card'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+    // ── Defer immediately — Discord requires a response within 3s ─
+    await interaction.deferReply({ ephemeral: true });
+
     const user = await upsertUser(
       interaction.user.id,
       interaction.user.username,
@@ -27,11 +30,9 @@ export const portfolioCommand = {
       interaction.guildId ?? undefined,
     );
 
-    // Pre-check: wallet must exist before deferring so we can reply ephemerally
     const wallets = await findWalletsByUserId(user.id);
     if (wallets.length === 0) {
-      await interaction.reply({
-        ephemeral: true,
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(Colors.Blue)
@@ -46,8 +47,6 @@ export const portfolioCommand = {
       });
       return;
     }
-
-    await interaction.deferReply({ ephemeral: true });
 
     const [ethPriceUsd, summary] = await Promise.all([
       getEthPriceUsd().catch(() => 1800),
