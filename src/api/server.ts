@@ -3,6 +3,7 @@
 // Internal API for health checks, job dashboard, and monitoring
 // ============================================================
 
+import path from 'path';
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -17,6 +18,12 @@ import { getConfig } from '../utils/config';
 import { createChildLogger } from '../utils/logger';
 import { prisma } from '../database/prisma';
 import { getRedisClient } from '../cache/redis';
+import { generatePnlCard } from '../utils/imageGenerator';
+import { getPnlSummaryForUser } from '../database/repositories/pnlRepository';
+import { calcRoiPct, calcWinRate } from '../utils/math';
+import { getEthPriceUsd } from './ethereum/client';
+import { withCache } from '../cache/redis';
+import { CK, TTL } from '../cache/cacheKeys';
 
 const log = createChildLogger('api-server');
 
@@ -164,6 +171,113 @@ export function createApiServer(): express.Application {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── PNL Card Stats JSON endpoint ────────────────────────────
+  // GET /api/pnl/stats?discordId=<id>  — returns the PnL card data as JSON
+  app.get('/api/pnl/stats', async (req: Request, res: Response) => {
+    try {
+      const discordId = req.query['discordId'] as string | undefined;
+      if (!discordId) {
+        res.status(400).json({ error: 'discordId query param required' });
+        return;
+      }
+
+      const user = await prisma.user.findUnique({ where: { discordId } });
+      if (!user) {
+        res.status(404).json({ error: 'User not found — link a wallet first via Discord' });
+        return;
+      }
+
+      const [ethPriceUsd, summary] = await Promise.all([
+        getEthPriceUsd().catch(() => 1800),
+        withCache(CK.pnlSummary(user.id), TTL.PNL_SUMMARY, () => getPnlSummaryForUser(user.id)),
+      ]);
+
+      const totalPnlEth = summary.totalRealizedPnlEth + summary.totalUnrealizedPnlEth;
+      const roiPct = parseFloat(calcRoiPct(totalPnlEth.toFixed(18), summary.totalCostBasisEth.toFixed(18)));
+      const winRate = parseFloat(calcWinRate(summary.winningTrades, summary.totalTrades));
+
+      res.json({
+        username: user.username,
+        realizedPnlEth: summary.totalRealizedPnlEth,
+        unrealizedPnlEth: summary.totalUnrealizedPnlEth,
+        totalPnlEth,
+        totalPnlUsd: totalPnlEth * ethPriceUsd,
+        costBasisEth: summary.totalCostBasisEth,
+        roiPct,
+        winRate,
+        totalTrades: summary.totalTrades,
+        wins: summary.winningTrades,
+        losses: summary.losingTrades,
+        bestTradeEth: summary.bestTradeEth,
+        worstTradeEth: summary.worstTradeEth,
+        avgHoldDays: summary.avgHoldDays,
+        ethPriceUsd,
+      });
+    } catch (err: any) {
+      log.error('PNL stats retrieval failed', { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── PNL Card PNG endpoint ───────────────────────────────────
+  // GET /api/pnl/card?discordId=<id>  — returns the card as a PNG
+  app.get('/api/pnl/card', async (req: Request, res: Response) => {
+    try {
+      const discordId = req.query['discordId'] as string | undefined;
+      if (!discordId) {
+        res.status(400).json({ error: 'discordId query param required' });
+        return;
+      }
+
+      const user = await prisma.user.findUnique({ where: { discordId } });
+      if (!user) {
+        res.status(404).json({ error: 'User not found — link a wallet first via Discord' });
+        return;
+      }
+
+      const [ethPriceUsd, summary] = await Promise.all([
+        getEthPriceUsd().catch(() => 1800),
+        withCache(CK.pnlSummary(user.id), TTL.PNL_SUMMARY, () => getPnlSummaryForUser(user.id)),
+      ]);
+
+      const totalPnlEth = summary.totalRealizedPnlEth + summary.totalUnrealizedPnlEth;
+      const roiPct = parseFloat(calcRoiPct(totalPnlEth.toFixed(18), summary.totalCostBasisEth.toFixed(18)));
+      const winRate = parseFloat(calcWinRate(summary.winningTrades, summary.totalTrades));
+
+      const buf = await generatePnlCard({
+        username: user.username,
+        realizedPnlEth: summary.totalRealizedPnlEth,
+        unrealizedPnlEth: summary.totalUnrealizedPnlEth,
+        totalPnlEth,
+        totalPnlUsd: totalPnlEth * ethPriceUsd,
+        costBasisEth: summary.totalCostBasisEth,
+        roiPct,
+        winRate,
+        totalTrades: summary.totalTrades,
+        wins: summary.winningTrades,
+        losses: summary.losingTrades,
+        bestTradeEth: summary.bestTradeEth,
+        worstTradeEth: summary.worstTradeEth,
+        avgHoldDays: summary.avgHoldDays,
+        ethPriceUsd,
+      });
+
+      res.set('Content-Type', 'image/png');
+      res.set('Content-Disposition', `attachment; filename="conn3ct-pnl-${discordId}.png"`);
+      res.set('Cache-Control', 'no-store');
+      res.end(buf);
+    } catch (err: any) {
+      log.error('PNL card generation failed', { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── PNL Card web viewer ─────────────────────────────────────
+  // GET /card — browser page to preview & download the PnL card
+  app.get('/card', (_req: Request, res: Response) => {
+    res.sendFile(path.resolve(__dirname, '../../public/card.html'));
   });
 
   // ── Global error handler ────────────────────────────────────

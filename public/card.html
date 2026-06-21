@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CONN3CT PNL — Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    :root {
+      --bg: #07070e;
+      --card-bg: #0b0b16;
+      --text: #e8ecff;
+      --dim: rgba(180, 190, 220, 0.7);
+      --dimmer: rgba(140, 150, 190, 0.45);
+      --profit: #00e676;
+      --loss: #ff3d71;
+      --accent: #4488ff;
+      --div: rgba(255, 255, 255, 0.08);
+      --glow-profit: 0 0 20px rgba(0, 230, 118, 0.25);
+      --glow-loss: 0 0 20px rgba(255, 61, 113, 0.25);
+      --font-mono: 'Fira Code', monospace;
+      --font-display: 'Orbitron', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #030307;
+      color: var(--text);
+      font-family: var(--font-mono);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow-x: hidden;
+    }
+
+    /* Cyberpunk Grid Background */
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(var(--div) 1px, transparent 1px),
+        linear-gradient(90deg, var(--div) 1px, transparent 1px);
+      background-size: 40px 40px;
+      background-position: center;
+      z-index: -2;
+    }
+
+    .grid-glow {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 50% 30%, rgba(30, 60, 180, 0.15) 0%, transparent 70%);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    /* Outer Wrapper with interactive actions */
+    .viewer-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      max-width: 940px;
+      width: 100%;
+    }
+
+    .action-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      padding: 0 10px;
+    }
+
+    .brand-title {
+      font-family: var(--font-display);
+      font-weight: 900;
+      font-size: 20px;
+      letter-spacing: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--profit));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .btn {
+      background: rgba(68, 136, 255, 0.12);
+      border: 1px solid var(--accent);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      font-size: 13px;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 10px rgba(68, 136, 255, 0.1);
+    }
+
+    .btn:hover {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 20px rgba(68, 136, 255, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    /* PNL CARD (900x460 exactly as in generatePnlCard) */
+    .pnl-card {
+      width: 900px;
+      height: 460px;
+      background: var(--bg);
+      border: 1px solid var(--div);
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Scanline & Vignette Effects */
+    .pnl-card::before {
+      content: " ";
+      display: block;
+      position: absolute;
+      top: 0; left: 0; bottom: 0; right: 0;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+      z-index: 10;
+      background-size: 100% 3px, 6px 100%;
+      pointer-events: none;
+    }
+
+    .pnl-card::after {
+      content: " ";
+      display: block;
+      position: absolute;
+      top: 0; left: 0; bottom: 0; right: 0;
+      background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.45) 100%);
+      z-index: 11;
+      pointer-events: none;
+    }
+
+    /* Radial glow overlay inside card */
+    .card-radial-glow {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(30, 60, 180, 0.12) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Header Bar */
+    .card-header {
+      height: 52px;
+      background: linear-gradient(90deg, #0044cc, #2200aa 50%, #440099);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .header-left {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .header-center {
+      font-size: 13px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.85);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .header-right {
+      font-size: 11px;
+      color: rgba(255,255,255,0.6);
+    }
+
+    /* Main Card Layout */
+    .card-body {
+      flex: 1;
+      display: flex;
+      position: relative;
+      z-index: 1;
+      border-bottom: 1px solid var(--div);
+    }
+
+    /* Left Pane */
+    .pane-left {
+      width: 460px;
+      padding: 36px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--div);
+    }
+
+    .pane-right {
+      flex: 1;
+      padding: 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .label {
+      font-size: 10px;
+      color: var(--dim);
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+
+    .hero-pnl {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 44px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+
+    .hero-usd {
+      font-size: 18px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.65);
+      margin-bottom: 12px;
+    }
+
+    .roi-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 700;
+      width: fit-content;
+      margin-bottom: 24px;
+    }
+
+    .winrate-container {
+      margin-top: auto;
+    }
+
+    .winrate-value {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .winrate-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .winrate-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--profit));
+      border-radius: 4px;
+    }
+
+    /* Right Pane Stats Rows */
+    .row-stat {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 16px;
+    }
+
+    .row-stat:last-of-type {
+      margin-bottom: 0;
+    }
+
+    .row-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.06);
+      margin: 14px 0;
+    }
+
+    .stat-eth {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .stat-usd {
+      font-size: 11px;
+      color: var(--dimmer);
+      margin-top: 2px;
+    }
+
+    /* Bottom Stats Strip */
+    .card-footer-strip {
+      height: 80px;
+      display: flex;
+      position: relative;
+      z-index: 1;
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .strip-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid var(--div);
+      padding: 10px 0;
+    }
+
+    .strip-item:last-child {
+      border-right: none;
+    }
+
+    .strip-label {
+      font-size: 9px;
+      color: var(--dimmer);
+      margin-bottom: 4px;
+    }
+
+    .strip-value {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* Signature footer */
+    .card-sig {
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 20px;
+      background: var(--bg);
+      font-size: 9px;
+      color: var(--dimmer);
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--div);
+    }
+
+    /* Color Classes */
+    .c-profit {
+      color: var(--profit) !important;
+      text-shadow: 0 0 10px rgba(0, 230, 118, 0.25);
+    }
+    .c-loss {
+      color: var(--loss) !important;
+      text-shadow: 0 0 10px rgba(255, 61, 113, 0.25);
+    }
+    .bg-profit {
+      background: rgba(0, 230, 118, 0.12);
+      border: 1px solid var(--profit);
+      color: var(--profit);
+    }
+    .bg-loss {
+      background: rgba(255, 61, 113, 0.12);
+      border: 1px solid var(--loss);
+      color: var(--loss);
+    }
+
+    /* Loader / Error Overlay */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 40px;
+      text-align: center;
+      font-family: var(--font-mono);
+    }
+
+    .loader {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--div);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s infinite linear;
+    }
+
+    .error-title {
+      font-size: 16px;
+      color: var(--loss);
+      font-weight: 700;
+    }
+
+    .error-desc {
+      font-size: 13px;
+      color: var(--dim);
+      max-width: 400px;
+    }
+
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="grid-bg"></div>
+  <div class="grid-glow"></div>
+
+  <div class="viewer-container">
+    <div class="action-bar">
+      <div class="brand-title">CONN3CT PNL</div>
+      <button class="btn" id="export-btn" onclick="triggerExport()" style="display: none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        EXPORT PNG
+      </button>
+    </div>
+
+    <!-- PNL Card -->
+    <div class="pnl-card" id="card">
+      <div class="card-radial-glow"></div>
+
+      <!-- Loading / Error States -->
+      <div class="overlay" id="overlay">
+        <div class="loader" id="loader"></div>
+        <div class="error-title" id="overlay-title">Retrieving PnL Records...</div>
+        <div class="error-desc" id="overlay-desc">Resolving node data and on-chain logs.</div>
+      </div>
+
+      <!-- Header -->
+      <div class="card-header">
+        <div class="header-left">CONN3CT</div>
+        <div class="header-center" id="card-username">USERNAME</div>
+        <div class="header-right" id="card-eth-price">1 ETH ~ $1,800.00</div>
+      </div>
+
+      <!-- Body -->
+      <div class="card-body">
+        <!-- Left Pane -->
+        <div class="pane-left">
+          <div class="label">Total P&L</div>
+          <div class="hero-pnl" id="card-total-pnl-eth">+0.0000 E</div>
+          <div class="hero-usd" id="card-total-pnl-usd">+$0.00</div>
+          <div class="roi-badge" id="card-roi-badge">+0.00%</div>
+
+          <div class="winrate-container">
+            <div class="label">Win Rate</div>
+            <div class="winrate-value" id="card-winrate">0%</div>
+            <div class="winrate-bar-bg">
+              <div class="winrate-bar-fill" id="card-winrate-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Pane -->
+        <div class="pane-right">
+          <!-- Realized -->
+          <div class="row-stat">
+            <div class="label">Realized P&L</div>
+            <div class="stat-eth" id="card-realized-eth">+0.0000 E</div>
+            <div class="stat-usd" id="card-realized-usd">+$0.00</div>
+          </div>
+
+          <div class="row-divider"></div>
+
+          <!-- Unrealized -->
+          <div class="row-stat">
+            <div class="label">Unrealized P&L</div>
+            <div class="stat-eth" id="card-unrealized-eth">+0.0000 E</div>
+            <div class="stat-usd" id="card-unrealized-usd">+$0.00</div>
+          </div>
+
+          <div class="row-divider"></div>
+
+          <!-- Cost Basis -->
+          <div class="row-stat">
+            <div class="label">Cost Basis</div>
+            <div class="stat-eth" id="card-cost-basis-eth">0.0000 E</div>
+            <div class="stat-usd" id="card-cost-basis-usd">$0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Strip -->
+      <div class="card-footer-strip">
+        <div class="strip-item">
+          <div class="strip-label">TRADES</div>
+          <div class="strip-value" id="card-trades">0</div>
+        </div>
+        <div class="strip-item">
+          <div class="strip-label">WINS</div>
+          <div class="strip-value" id="card-wins">0</div>
+        </div>
+        <div class="strip-item">
+          <div class="strip-label">LOSSES</div>
+          <div class="strip-value" id="card-losses">0</div>
+        </div>
+        <div class="strip-item">
+          <div class="strip-label">BEST</div>
+          <div class="strip-value" id="card-best">+0.0000 E</div>
+        </div>
+        <div class="strip-item">
+          <div class="strip-label">WORST</div>
+          <div class="strip-value" id="card-worst">-0.0000 E</div>
+        </div>
+        <div class="strip-item">
+          <div class="strip-label">AVG HOLD</div>
+          <div class="strip-value" id="card-avg-hold">0d</div>
+        </div>
+      </div>
+
+      <!-- Bottom Signature -->
+      <div class="card-sig">
+        CONN3CT PNL - Powered by OpenSea & Alchemy
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Format Helper utilities
+    function fEth(n, d = 4) { return Math.abs(n).toFixed(d); }
+    function fUsd(n) {
+      const a = Math.abs(n);
+      if (a >= 1000000) return `$${(a/1000000).toFixed(2)}M`;
+      if (a >= 1000) return `$${(a/1000).toFixed(1)}k`;
+      return `$${a.toFixed(2)}`;
+    }
+    function fRoi(p) {
+      const s = p >= 0 ? '+' : '-';
+      const a = Math.abs(p);
+      if (a >= 100000) return `${s}${(a/1000).toFixed(0)}k%`;
+      if (a >= 10000) return `${s}${(a/1000).toFixed(1)}k%`;
+      return `${s}${a.toFixed(2)}%`;
+    }
+    function sign(n) { return n >= 0 ? '+' : '-'; }
+
+    let pnlData = null;
+
+    // Render function
+    function renderPNL(d) {
+      pnlData = d;
+      const isPositive = d.totalPnlEth >= 0;
+      const themeClass = isPositive ? 'c-profit' : 'c-loss';
+      const badgeClass = isPositive ? 'bg-profit' : 'bg-loss';
+
+      // Set Eth Price
+      document.getElementById('card-eth-price').textContent = `1 ETH ~ ${fUsd(d.ethPriceUsd)}`;
+      document.getElementById('card-username').textContent = d.username.toUpperCase();
+
+      // Total P&L
+      const totalPnlEthEl = document.getElementById('card-total-pnl-eth');
+      totalPnlEthEl.textContent = `${sign(d.totalPnlEth)}${fEth(d.totalPnlEth)} E`;
+      totalPnlEthEl.className = 'hero-pnl ' + themeClass;
+
+      const totalPnlUsdEl = document.getElementById('card-total-pnl-usd');
+      totalPnlUsdEl.textContent = `${sign(d.totalPnlUsd)}${fUsd(d.totalPnlUsd)}`;
+      totalPnlUsdEl.className = 'hero-usd ' + themeClass;
+
+      const roiBadgeEl = document.getElementById('card-roi-badge');
+      roiBadgeEl.textContent = fRoi(d.roiPct);
+      roiBadgeEl.className = 'roi-badge ' + badgeClass;
+
+      // Win Rate
+      const winrateEl = document.getElementById('card-winrate');
+      winrateEl.textContent = `${d.winRate.toFixed(0)}%`;
+      winrateEl.className = 'winrate-value ' + (d.winRate >= 50 ? 'c-profit' : 'c-loss');
+      document.getElementById('card-winrate-fill').style.width = `${Math.min(d.winRate, 100)}%`;
+
+      // Realized
+      const realizedEthEl = document.getElementById('card-realized-eth');
+      realizedEthEl.textContent = `${sign(d.realizedPnlEth)}${fEth(d.realizedPnlEth)} E`;
+      realizedEthEl.className = 'stat-eth ' + (d.realizedPnlEth >= 0 ? 'c-profit' : 'c-loss');
+      
+      const realizedUsdEl = document.getElementById('card-realized-usd');
+      realizedUsdEl.textContent = `${sign(d.realizedPnlEth * d.ethPriceUsd)}${fUsd(d.realizedPnlEth * d.ethPriceUsd)}`;
+      realizedUsdEl.className = 'stat-usd ' + (d.realizedPnlEth >= 0 ? 'c-profit' : 'c-loss');
+
+      // Unrealized
+      const unrealizedEthEl = document.getElementById('card-unrealized-eth');
+      unrealizedEthEl.textContent = `${sign(d.unrealizedPnlEth)}${fEth(d.unrealizedPnlEth)} E`;
+      unrealizedEthEl.className = 'stat-eth ' + (d.unrealizedPnlEth >= 0 ? 'c-profit' : 'c-loss');
+      
+      const unrealizedUsdEl = document.getElementById('card-unrealized-usd');
+      unrealizedUsdEl.textContent = `${sign(d.unrealizedPnlEth * d.ethPriceUsd)}${fUsd(d.unrealizedPnlEth * d.ethPriceUsd)}`;
+      unrealizedUsdEl.className = 'stat-usd ' + (d.unrealizedPnlEth >= 0 ? 'c-profit' : 'c-loss');
+
+      // Cost Basis
+      document.getElementById('card-cost-basis-eth').textContent = `${fEth(d.costBasisEth)} E`;
+      document.getElementById('card-cost-basis-usd').textContent = fUsd(d.costBasisEth * d.ethPriceUsd);
+
+      // Strip Items
+      document.getElementById('card-trades').textContent = d.totalTrades;
+      document.getElementById('card-wins').textContent = d.wins;
+      document.getElementById('card-losses').textContent = d.losses;
+      document.getElementById('card-best').textContent = `+${fEth(d.bestTradeEth)} E`;
+      document.getElementById('card-worst').textContent = `${sign(d.worstTradeEth)}${fEth(d.worstTradeEth)} E`;
+      document.getElementById('card-avg-hold').textContent = `${d.avgHoldDays}d`;
+
+      // Hide Overlay and Show Action Button
+      document.getElementById('overlay').style.display = 'none';
+      document.getElementById('export-btn').style.display = 'flex';
+    }
+
+    // Save PnL card functionality (html2canvas)
+    async function saveCard(data) {
+      if (data) {
+        renderPNL(data);
+      }
+      await new Promise(r => setTimeout(r, 300)); // wait for transitions/glow to settle
+      const card = document.getElementById('card');
+      if (!card) return;
+      const canvas = await html2canvas(card, {
+        scale: 2,
+        backgroundColor: null
+      });
+      const link = document.createElement('a');
+      link.download = `pnl_${data && data.username ? data.username : 'report'}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Direct invocation from button
+    function triggerExport() {
+      if (pnlData) {
+        saveCard(pnlData);
+      }
+    }
+
+    // Initialization: Fetch Data
+    window.addEventListener('DOMContentLoaded', async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const discordId = urlParams.get('discordId');
+
+      if (!discordId) {
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('overlay-title').textContent = 'Configuration Needed';
+        document.getElementById('overlay-desc').textContent = 'Missing "discordId" parameter in query. Example: /card?discordId=123456789';
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/pnl/stats?discordId=${discordId}`);
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Server responded with an error');
+        }
+        const data = await response.json();
+        renderPNL(data);
+      } catch (err) {
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('overlay-title').textContent = 'PnL Retrieval Failed';
+        document.getElementById('overlay-desc').textContent = err.message;
+      }
+    });
+  </script>
+</body>
+</html>
