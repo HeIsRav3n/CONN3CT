@@ -129,16 +129,55 @@ export async function getErc1155TransfersForWallet(
   return [...incoming.transfers, ...outgoing.transfers] as AssetTransfersWithMetadata[];
 }
 
-// ── ETH/USD price (CoinGecko) ─────────────────────────────────
-export async function getEthPriceUsd(): Promise<number> {
-  const cgKey = process.env['COINGECKO_API_KEY'];
-  const url = cgKey
-    ? `https://pro-api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&x_cg_pro_api_key=${cgKey}`
-    : `https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd`;
+// ── ETH/USD price (CoinGecko → CryptoCompare → cached fallback) ──
+let _lastKnownEthPrice = 0;
 
-  const res = await fetch(url);
-  const data = (await res.json()) as { ethereum: { usd: number } };
-  return data.ethereum.usd;
+export async function getEthPriceUsd(): Promise<number> {
+  // 1. CoinGecko (free or pro)
+  try {
+    const cgKey = process.env['COINGECKO_API_KEY'];
+    const url = cgKey
+      ? `https://pro-api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&x_cg_pro_api_key=${cgKey}`
+      : `https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) {
+      const data = (await res.json()) as { ethereum: { usd: number } };
+      const price = data.ethereum?.usd;
+      if (price && price > 0) {
+        _lastKnownEthPrice = price;
+        return price;
+      }
+    }
+  } catch {
+    // fall through to next provider
+  }
+
+  // 2. CryptoCompare (no key required)
+  try {
+    const res = await fetch(
+      'https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD',
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { USD: number };
+      const price = data.USD;
+      if (price && price > 0) {
+        _lastKnownEthPrice = price;
+        return price;
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  // 3. Last known value, or throw so caller can log the real failure
+  if (_lastKnownEthPrice > 0) {
+    log.warn('ETH price fetch failed — using last known value', { price: _lastKnownEthPrice });
+    return _lastKnownEthPrice;
+  }
+
+  throw new Error('All ETH price providers failed and no cached value available');
 }
 
 // ── Validate wallet address ───────────────────────────────────

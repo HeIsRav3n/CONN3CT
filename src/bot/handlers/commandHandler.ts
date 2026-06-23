@@ -87,18 +87,18 @@ export function registerCommandHandler(client: Client): void {
       const command = commands.get(interaction.commandName);
       if (!command) return;
 
-      // Upsert user on every interaction
-      try {
-        await upsertUser(
-          interaction.user.id,
-          interaction.user.username,
-          interaction.user.discriminator,
-          interaction.user.displayAvatarURL(),
-          interaction.guildId ?? undefined,
-        );
-      } catch (err: any) {
-        log.warn('Failed to upsert user on interaction', { error: err.message });
-      }
+      // Upsert user in the background — do NOT await here.
+      // Awaiting this before execute() delays deferReply past Discord's 3s window.
+      // Commands upsert again when they need the DB user record.
+      upsertUser(
+        interaction.user.id,
+        interaction.user.username,
+        interaction.user.discriminator,
+        interaction.user.displayAvatarURL(),
+        interaction.guildId ?? undefined,
+      ).catch((err: Error) =>
+        log.warn('Background upsert failed', { error: err.message }),
+      );
 
       // Per-user rate limit check
       if (!checkRateLimit(interaction.user.id)) {

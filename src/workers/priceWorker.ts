@@ -40,16 +40,23 @@ export function createPriceWorker(): Worker<PriceUpdateJobData> {
 
       for (const collection of staleCollections) {
         try {
+          // Skip auto-generated slugs that won't resolve on OpenSea
+          if (!collection.slug || collection.slug.startsWith('unknown-')) {
+            log.debug('Skipping unknown slug', { slug: collection.slug });
+            continue;
+          }
+
           const stats = await opensea.getCollectionStats(collection.slug);
           if (!stats || !stats.total) {
             log.warn('No stats or total found for collection', { slug: collection.slug });
             continue;
           }
           const total = stats.total;
-          const floorPrice = total.floor_price ?? 0;
-          const volume = total.volume ?? 0;
-          const marketCap = total.market_cap ?? 0;
-          const numOwners = total.num_owners ?? 0;
+          // Use Number() to coerce any string/null/undefined to a safe numeric value
+          const floorPrice = Number(total.floor_price ?? 0) || 0;
+          const volume = Number(total.volume ?? 0) || 0;
+          const marketCap = Number(total.market_cap ?? 0) || 0;
+          const numOwners = Number(total.num_owners ?? 0) || 0;
 
           await updateCollectionStats(collection.id, {
             floorPriceEth: floorPrice.toFixed(18),
@@ -77,6 +84,7 @@ export function createPriceWorker(): Worker<PriceUpdateJobData> {
     {
       connection: getRedisConnectionOpts(),
       concurrency: cfg.workers.priceConcurrency,
+      lockDuration: 300_000, // 5 min — price batch can take a while across many collections
     },
   );
 
